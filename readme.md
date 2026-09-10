@@ -72,7 +72,7 @@ g++ -std=c++17 -Wall -Wextra -o raspberry_server raspberry_server.cpp
 Компилирует сервер Raspberry Pi и создаёт исполняемый файл `raspberry_server`.
 
 ```bash
-g++ -std=c++17 -Wall -Wextra -o raspberry_server server.cpp
+g++ -std=c++17 -Wall -Wextra -o labirinth_client labirinth_client.cpp
 ```
 Компилирует сервер из файла `server.cpp`.
 
@@ -89,7 +89,7 @@ chmod +x raspberry_server
 ## Компиляция PC-клиента
 
 ```powershell
-g++ -std=c++17 -Wall -Wextra -o pc_client.exe pc_client.cpp -lws2_32
+g++ -std=c++17 -Wall -Wextra -o labirinth_server.exe labirinth_server.cpp -lws2_32
 ```
 Компилирует PC-клиент под Windows с библиотекой WinSock2.
 
