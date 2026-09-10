@@ -66,15 +66,12 @@ cat имя_файла
 
 ## Компиляция Raspberry Pi
 
-```bash
-g++ -std=c++17 -Wall -Wextra -o raspberry_server raspberry_server.cpp
-```
-Компилирует сервер Raspberry Pi и создаёт исполняемый файл `raspberry_server`.
+
 
 ```bash
 g++ -std=c++17 -Wall -Wextra -o labirinth_client labirinth_client.cpp
 ```
-Компилирует сервер из файла `server.cpp`.
+Компилирует сервер из файла `labirinth_client.cpp`.
 
 ```bash
 ./raspberry_server
