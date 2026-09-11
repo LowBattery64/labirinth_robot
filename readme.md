@@ -10,18 +10,29 @@
 ```
 ┌──────────┐   USB    ┌──────────────┐   TCP:5000   ┌──────────┐
 │ Arduino  │ ───────► │ Raspberry Pi │ ◄─────────── │    ПК    │
-│  моторы  │          │   (сервер)   │   Wi-Fi      │ (клиент) │
-└──────────┘          └──────────────┘              └──────────┘
+│  моторы  │          │   (сервер)   │  управление  │ (клиент) │
+└──────────┘          │              │              │          │
+                       │              │   TCP:5001   │          │
+                       │  USB-камера  │ ───────────► │   видео  │
+                       └──────────────┘   Wi-Fi      └──────────┘
  low_level.ino        labirinth_server.cpp          labirinth_client.cpp
+                       video_server.cpp              video_client.cpp
 ```
+
+Канал управления (порт 5000) и канал видео (порт 5001) — два независимых
+TCP-соединения и два независимых процесса на каждой стороне. Видео можно
+запускать, выключать и перезапускать, не трогая управление, и наоборот.
 
 **Роли файлов:**
 
 | Файл | Где запускается | Что делает |
 |---|---|---|
 | `low_level.ino` | Arduino | Читает Serial, крутит моторы |
-| `labirinth_server.cpp` | Raspberry Pi | Принимает TCP-команды, шлёт их в Arduino |
+| `labirinth_server.cpp` | Raspberry Pi | Принимает TCP-команды (порт 5000), шлёт их в Arduino |
 | `labirinth_client.cpp` | ПК (Windows) | Читает клавиатуру, шлёт команды по TCP |
+| `labirinth_server_with_joystick.cpp` | ПК (Windows) | То же самое, но управление с геймпада (XInput) |
+| `video_server.cpp` | Raspberry Pi | Захватывает кадры с USB-камеры, шлёт JPEG по TCP (порт 5001) |
+| `video_client.cpp` | ПК (Windows) | Принимает JPEG-кадры и показывает окно с видео |
 
 ---
 
@@ -34,6 +45,8 @@
 * ПК с Windows и компилятором `g++` (MinGW).
 * USB-кабель **data** (не «только зарядка»).
 * Все устройства в одной подсети (например, `192.168.1.x` или `10.122.144.x`).
+* (Для видео) USB-веб-камера, подключённая к Raspberry Pi.
+* (Для видео) Установленный OpenCV — на плате и на ПК (см. раздел 7.5).
 
 
 
@@ -201,6 +214,90 @@ g++ -std=c++17 -Wall -Wextra -o labirinth_client.exe labirinth_client.cpp -lws2_
 
 ---
 
+## 📷 7.5. Видео с робота (опционально, но по умолчанию — да)
+
+Видео идёт по **отдельному** каналу (порт 5001) и **отдельными**
+программами — `video_server.cpp` / `video_client.cpp`. Управление
+(`labirinth_server` / `labirinth_client`) при этом работает точно
+так же, как раньше, и его можно использовать без видео вообще.
+
+### 7.5.1. Подключить USB-камеру к Raspberry Pi
+
+Обычная USB-веб-камера. Проверить, что плата её видит:
+
+```bash
+ls /dev/video*
+```
+
+Если устройство не `/dev/video0` — в `video_server.cpp` в классе
+`VideoSettings` поменять `CAMERA_INDEX` на нужный номер.
+
+### 7.5.2. Установить OpenCV на Raspberry Pi
+
+```bash
+sudo apt update
+sudo apt install -y libopencv-dev pkg-config
+```
+
+### 7.5.3. Собрать видео-сервер на Raspberry Pi
+
+```bash
+cd ~/labirinth_robot
+g++ -std=c++17 -Wall -Wextra -o video_server video_server.cpp \
+    $(pkg-config --cflags --libs opencv4)
+```
+
+> Если `pkg-config` не находит `opencv4` (бывает на некоторых
+> версиях Raspberry Pi OS), собрать так:
+> ```bash
+> g++ -std=c++17 -Wall -Wextra -I/usr/include/opencv4 -o video_server \
+>     video_server.cpp -lopencv_core -lopencv_imgcodecs -lopencv_videoio
+> ```
+
+### 7.5.4. Установить OpenCV на ПК (Windows)
+
+Проще всего через [vcpkg](https://github.com/microsoft/vcpkg):
+
+```powershell
+git clone https://github.com/microsoft/vcpkg
+cd vcpkg
+.\bootstrap-vcpkg.bat
+.\vcpkg install opencv:x64-windows
+```
+
+### 7.5.5. Собрать видео-клиент на ПК
+
+```powershell
+g++ -std=c++17 -Wall -Wextra -o video_client.exe video_client.cpp -lws2_32 ^
+    -I <путь_к_vcpkg>\installed\x64-windows\include ^
+    -L <путь_к_vcpkg>\installed\x64-windows\lib ^
+    -lopencv_core4 -lopencv_imgcodecs4 -lopencv_highgui4
+```
+
+(точные имена `-lopencv_coreXXX` зависят от версии OpenCV — посмотреть
+в `<vcpkg>\installed\x64-windows\lib`).
+
+### 7.5.6. Запуск
+
+На Raspberry Pi (в отдельном окне/сессии SSH от `labirinth_server`):
+
+```bash
+cd ~/labirinth_robot
+./video_server
+```
+
+На ПК (в отдельном окне от `labirinth_client.exe`):
+
+```cmd
+video_client.exe IP_ПЛАТЫ
+```
+
+Откроется окно с видео. `Q` или `Esc` — закрыть. Если видео пропало,
+а управление работает — проблема только в камере/видеоканале,
+на управление это не влияет.
+
+---
+
 ## 🎮 8. Запускаем клиент и управляем
 
 ### 8.1. Запустить клиент с IP платы
@@ -244,7 +341,6 @@ PC подключён: 192.168.1.100
 | Пробел | `S` | Стоп |
 | `Q` | — | Выход из клиента |
 
-> **Enter нажимать не нужно** — клавиша считывается сразу.
 
 ### 8.3. Что видно в окне сервера
 
@@ -268,7 +364,7 @@ PC подключён: 192.168.1.100
 
 Либо `Ctrl+C` в терминале клиента — принудительно.
 
-### 9.2. Остановить сервер на малине
+### 9.2. Остановить сервер на плате
 
 `Ctrl+C` в окне, где запущен `./labirinth_server`.
 
@@ -333,7 +429,7 @@ pkill labirinth_server           # убить по имени
 ### Сеть
 
 ```bash
-hostname -I          # IP малины
+hostname -I          # IP платы
 ip addr              # все интерфейсы
 ss -ltn              # слушающие TCP-порты
 ss -ltn | grep 5000  # слушает ли кто-то 5000
@@ -381,5 +477,10 @@ cd ..                # на уровень выше
 
 5. **Питание моторов.** Драйвер моторов должен иметь **отдельное питание** — не от USB платы. Иначе моторы не потянут или плата уйдёт в перезагрузку.
 
+6. **Видео — независимый канал.** `video_server.cpp` / `video_client.cpp` не знают о `labirinth_server.cpp` / `labirinth_client.cpp` и наоборот. Можно запускать видео без управления, управление без видео, перезапускать один канал, пока работает другой.
+
+7. **Качество JPEG.** В `video_server.cpp`, класс `VideoSettings`, есть `JPEG_QUALITY` (сейчас 60). Это первый шаг к будущему требованию "управление загрузкой радиоканала" — понижая это число при слабом канале, можно уменьшить размер кадров ценой качества картинки. Сейчас значение статическое, менять нужно вручную и пересобирать.
+
+8
 ---
 
