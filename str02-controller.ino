@@ -8,6 +8,10 @@
 // движения и читает телеметрию, но напрямую по USB (нативный Serial),
 // без отдельного Arduino посередине.
 //
+// ПОДТВЕРЖДЁННЫЙ КОНФЛИКТ ПИНОВ: D0/D1 физически заняты аппаратным
+// UART0, через который плата по USB общается с Raspberry Pi. ИК-датчики,
+// которые изначально висели на этих пинах (центральный/левый), пришлось
+// отключить и снять. Остался только один ИК-датчик, на D2.
 // ============================================================
 
 #include "TrackingCamDxlUart.h"
@@ -26,10 +30,10 @@ public:
     static const uint8_t M2_DIR = 47;
     static const uint8_t M2_SPEED = 46;
 
-    // ИК-датчики препятствий
-    static const uint8_t IR_CENTER = 0; // см. предупреждение выше
-    static const uint8_t IR_LEFT = 1;   // см. предупреждение выше
-    static const uint8_t IR_RIGHT = 2;
+    // ИК-датчик препятствий. D0 и D1 заняты Serial-связью с Raspberry Pi
+    // (см. предупреждение выше) и больше не используются под датчики -
+    // остался только тот, что был на D2.
+    static const uint8_t IR_FRONT = 2;
 
     // УЗ-дальномеры (Trig, Echo)
     static const uint8_t US_CENTER_TRIG = 3;
@@ -89,7 +93,12 @@ private:
 
 
 // ============================================================
-// ИК-датчики препятствий
+// ИК-датчик препятствий
+// ------------------------------------------------------------
+// Раньше их было три (центр/лево/право на D0/D1/D2), но D0 и D1
+// пришлось освободить под Serial-связь с Raspberry Pi - остался
+// только один, на D2. Если вернёте датчики на другие свободные
+// пины, добавить их сюда можно будет одной строкой.
 // ============================================================
 
 class IRSensorArray
@@ -97,14 +106,10 @@ class IRSensorArray
 public:
     void begin()
     {
-        pinMode(Pins::IR_CENTER, INPUT);
-        pinMode(Pins::IR_LEFT, INPUT);
-        pinMode(Pins::IR_RIGHT, INPUT);
+        pinMode(Pins::IR_FRONT, INPUT);
     }
 
-    bool centerBlocked() const { return digitalRead(Pins::IR_CENTER) == HIGH; }
-    bool leftBlocked() const { return digitalRead(Pins::IR_LEFT) == HIGH; }
-    bool rightBlocked() const { return digitalRead(Pins::IR_RIGHT) == HIGH; }
+    bool frontBlocked() const { return digitalRead(Pins::IR_FRONT) == HIGH; }
 };
 
 
@@ -367,11 +372,7 @@ void sendTelemetry()
     ultrasonicSensors.readAll(usCenter, usLeft, usRight);
 
     Serial.print("T,IR,");
-    Serial.print(irSensors.centerBlocked());
-    Serial.print(',');
-    Serial.print(irSensors.leftBlocked());
-    Serial.print(',');
-    Serial.print(irSensors.rightBlocked());
+    Serial.print(irSensors.frontBlocked());
 
     Serial.print(",US,");
     Serial.print(usCenter);
