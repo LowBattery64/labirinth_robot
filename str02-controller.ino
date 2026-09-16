@@ -261,30 +261,32 @@ private:
     // подбирается опытным путём (1 -> 2 -> 3), пока камера не откликнется.
     static const uint8_t CAM_ID = 51;
     static const uint8_t SERIAL_PORT = 1;
-    static const long CAM_BAUDRATE = 115200;
-    static const long PC_BAUDRATE = 115200;
-    static const uint16_t TIMEOUT_MS = 30;
+    static const uint32_t BAUD_RATE = 115200;
+    static const uint8_t TIMEOUT_MS = 30;
+
+    // Сколько объектов максимум запрашивать за один readObjects()/readBlobs().
+    static const uint8_t MAX_OBJECTS = 5;
 
     TrackingCamDxlUart cam;
 
 public:
     void begin()
     {
-        cam.TrackingCamDxlUartInit(CAM_ID, SERIAL_PORT, CAM_BAUDRATE, PC_BAUDRATE, TIMEOUT_MS);
+        cam.init(CAM_ID, SERIAL_PORT, BAUD_RATE, TIMEOUT_MS);
     }
 
     // Составные (многоцветные) объекты — то, что скорее всего нужно
     // для жёлтых меток-стикеров из требований проекта.
     uint8_t readObjects()
     {
-        return cam.TrackingCamDxl_ReadObjects();
+        return cam.readObjects(MAX_OBJECTS);
     }
 
     // Однотонные области — на случай, если метки окажутся простым
     // одноцветным пятном, а не композитным маркером.
     uint8_t readBlobs()
     {
-        return cam.TrackingCamDxl_ReadObjects() == 0 ? cam.TrackingCamDxl_ReadBlobs() : 0;
+        return cam.readBlobs(MAX_OBJECTS);
     }
 
     bool hasObject() const { return cam.obj[0].obj_size > 0; }
