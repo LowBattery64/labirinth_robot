@@ -3,14 +3,25 @@
 // ------------------------------------------------------------
 // Заменяет старую пару "low_level.ino (Arduino) + labirinth_server.cpp
 // (Raspberry Pi -> отдельный Arduino по serial)" на новой аппаратной
-// платформе: здесь ВСЁ (моторы, датчики, камера) висит на одной
+// платформе: здесь моторы, ИК/УЗ/энкодеры висят прямо на одной
 // Mega-совместимой плате. Raspberry Pi по-прежнему шлёт команды
 // движения и читает телеметрию, но напрямую по USB (нативный Serial),
 // без отдельного Arduino посередине.
 //
+// Видео теперь идёт НЕ через эту плату: используется обычная
+// USB-веб-камера, подключённая напрямую к Raspberry Pi и раздаваемая
+// оператору через video_server.cpp/video_client.cpp (см. readme.md).
+// Модуль TrackingCam и его библиотека этой сборке не нужны, поэтому
+// весь код, завязанный на TrackingCamDxlUart, отсюда убран.
+//
+// ПОДТВЕРЖДЁННЫЙ КОНФЛИКТ ПИНОВ: на этой плате D0/D1 физически заняты
+// аппаратным UART0, через который идёт связь с Raspberry Pi по USB —
+// висевшие там ИК-датчики (центральный/левый) пришлось отключить и
+// физически освободить эти пины. Ниже оставлен только тот ИК-датчик,
+// что был на D2 (не конфликтует). Если по факту сохранился ещё один
+// датчик на каком-то другом свободном пине — надо будет добавить его
+// в класс Pins/IRSensorArray и в sendTelemetry() ниже.
 // ============================================================
-
-#include "TrackingCamDxlUart.h"
 
 
 // ============================================================
@@ -26,10 +37,10 @@ public:
     static const uint8_t M2_DIR = 47;
     static const uint8_t M2_SPEED = 46;
 
-    // ИК-датчики препятствий
-    static const uint8_t IR_CENTER = 0; // см. предупреждение выше
-    static const uint8_t IR_LEFT = 1;   // см. предупреждение выше
-    static const uint8_t IR_RIGHT = 2;
+    // ИК-датчик препятствий. D0 и D1 заняты Serial-связью с Raspberry Pi
+    // (см. предупреждение выше) и больше не используются под датчики -
+    // остался только тот, что был на D2.
+    static const uint8_t IR_FRONT = 2;
 
     // УЗ-дальномеры (Trig, Echo)
     static const uint8_t US_CENTER_TRIG = 3;
@@ -89,7 +100,13 @@ private:
 
 
 // ============================================================
-// ИК-датчики препятствий
+// ИК-датчик препятствий
+// ------------------------------------------------------------
+// Раньше их было три (центр/лево/право на D0/D1/D2), но D0 и D1
+// пришлось освободить под Serial-связь с Raspberry Pi - остался
+// только один, на D2. Класс всё равно оставлен отдельным - если
+// вернёте датчики на другие свободные пины, добавить их сюда будет
+// одной строкой.
 // ============================================================
 
 class IRSensorArray
@@ -97,14 +114,10 @@ class IRSensorArray
 public:
     void begin()
     {
-        pinMode(Pins::IR_CENTER, INPUT);
-        pinMode(Pins::IR_LEFT, INPUT);
-        pinMode(Pins::IR_RIGHT, INPUT);
+        pinMode(Pins::IR_FRONT, INPUT);
     }
 
-    bool centerBlocked() const { return digitalRead(Pins::IR_CENTER) == HIGH; }
-    bool leftBlocked() const { return digitalRead(Pins::IR_LEFT) == HIGH; }
-    bool rightBlocked() const { return digitalRead(Pins::IR_RIGHT) == HIGH; }
+    bool frontBlocked() const { return digitalRead(Pins::IR_FRONT) == HIGH; }
 };
 
 
@@ -245,50 +258,6 @@ public:
 
 
 // ============================================================
-// Модуль технического зрения TrackingCam
-// ============================================================
-
-class CameraTracker
-{
-private:
-    // Физически на плате разведён только один разъём UART под камеру.
-    // Какой это номер аппаратного UART внутри — неизвестно заранее,
-    // подбирается опытным путём (1 -> 2 -> 3), пока камера не откликнется.
-    static const uint8_t CAM_ID = 51;
-    static const uint8_t SERIAL_PORT = 1;
-    static const long CAM_BAUDRATE = 115200;
-    static const long PC_BAUDRATE = 115200;
-    static const uint16_t TIMEOUT_MS = 30;
-
-    TrackingCamDxlUart cam;
-
-public:
-    void begin()
-    {
-        cam.TrackingCamDxlUartInit(CAM_ID, SERIAL_PORT, CAM_BAUDRATE, PC_BAUDRATE, TIMEOUT_MS);
-    }
-
-    // Составные (многоцветные) объекты — то, что скорее всего нужно
-    // для жёлтых меток-стикеров из требований проекта.
-    uint8_t readObjects()
-    {
-        return cam.TrackingCamDxl_ReadObjects();
-    }
-
-    // Однотонные области — на случай, если метки окажутся простым
-    // одноцветным пятном, а не композитным маркером.
-    uint8_t readBlobs()
-    {
-        return cam.TrackingCamDxl_ReadObjects() == 0 ? cam.TrackingCamDxl_ReadBlobs() : 0;
-    }
-
-    bool hasObject() const { return cam.obj[0].obj_size > 0; }
-    int objectX() const { return cam.obj[0].cx; }
-    int objectY() const { return cam.obj[0].cy; }
-};
-
-
-// ============================================================
 // Простой протокол управления по Serial (от Raspberry Pi)
 // ------------------------------------------------------------
 // 'F' — вперёд, 'B' — назад, 'L' — влево, 'R' — вправо, 'S' — стоп.
@@ -355,7 +324,6 @@ MotorController motors;
 IRSensorArray irSensors;
 UltrasonicArray ultrasonicSensors;
 SpeedSensorArray speedSensors;
-CameraTracker camera;
 CommandProtocol commandProtocol(motors);
 
 unsigned long lastTelemetryMs = 0;
@@ -367,11 +335,7 @@ void sendTelemetry()
     ultrasonicSensors.readAll(usCenter, usLeft, usRight);
 
     Serial.print("T,IR,");
-    Serial.print(irSensors.centerBlocked());
-    Serial.print(',');
-    Serial.print(irSensors.leftBlocked());
-    Serial.print(',');
-    Serial.print(irSensors.rightBlocked());
+    Serial.print(irSensors.frontBlocked());
 
     Serial.print(",US,");
     Serial.print(usCenter);
@@ -385,30 +349,17 @@ void sendTelemetry()
     Serial.print(',');
     Serial.print(speedSensors.rightPulseCount());
 
-    uint8_t objects = camera.readObjects();
-    Serial.print(",OBJ,");
-    Serial.print(objects);
-    if (objects > 0)
-    {
-        Serial.print(',');
-        Serial.print(camera.objectX());
-        Serial.print(',');
-        Serial.print(camera.objectY());
-    }
-
     Serial.println();
 }
 
 void setup()
 {
-    // PC_BaudRate у камеры и скорость Serial к Raspberry Pi должны совпадать.
     Serial.begin(115200);
 
     motors.begin();
     irSensors.begin();
     ultrasonicSensors.begin();
     speedSensors.begin();
-    camera.begin();
 }
 
 void loop()
