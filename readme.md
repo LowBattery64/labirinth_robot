@@ -268,14 +268,9 @@ cd vcpkg
 ### 7.5.5. Собрать видео-клиент на ПК
 
 ```powershell
-g++ -std=c++17 -Wall -Wextra -o video_client.exe video_client.cpp -lws2_32 ^
-    -I <путь_к_vcpkg>\installed\x64-windows\include ^
-    -L <путь_к_vcpkg>\installed\x64-windows\lib ^
-    -lopencv_core4 -lopencv_imgcodecs4 -lopencv_highgui4
+cl /EHsc /std:c++17 video_client.cpp /I D:\OpenCV\opencv\build\include /link /LIBPATH:D:\OpenCV\opencv\build\x64\vc12\lib opencv_world300.lib ws2_32.lib
 ```
 
-(точные имена `-lopencv_coreXXX` зависят от версии OpenCV — посмотреть
-в `<vcpkg>\installed\x64-windows\lib`).
 
 ### 7.5.6. Запуск
 
