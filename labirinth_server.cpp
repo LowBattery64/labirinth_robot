@@ -481,7 +481,7 @@ private:
 
     // См. предупреждение в шапке файла - проверить на реальном Pi.
     static constexpr const char* SERIAL_PORT =
-        "/dev/ttyACM0";
+        "/dev/ttyUSB0";
 
     static constexpr speed_t SERIAL_BAUD =
         B115200;
