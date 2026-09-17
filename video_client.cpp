@@ -1,4 +1,3 @@
-```cpp
 // ============================================================
 // OmegaBot — клиент видеопотока (ПК)
 // ------------------------------------------------------------
@@ -14,7 +13,6 @@
 #include <cstdint>
 
 #ifdef _WIN32
-    #include <windows.h>
     #include <winsock2.h>
     #include <ws2tcpip.h>
     #pragma comment(lib, "ws2_32.lib")
@@ -91,12 +89,7 @@ public:
 
         while (totalReceived < length)
         {
-            int received = recv(
-                socketFd,
-                buffer + totalReceived,
-                static_cast<int>(length - totalReceived),
-                0
-            );
+            int received = recv(socketFd, buffer + totalReceived, static_cast<int>(length - totalReceived), 0);
 
             if (received <= 0)
             {
@@ -114,16 +107,15 @@ public:
     {
         uint32_t frameSizeNetworkOrder = 0;
 
-        if (!receiveExact(
-                reinterpret_cast<char*>(&frameSizeNetworkOrder),
-                sizeof(frameSizeNetworkOrder)))
+        if (!receiveExact(reinterpret_cast<char*>(&frameSizeNetworkOrder), sizeof(frameSizeNetworkOrder)))
         {
             return false;
         }
 
         uint32_t frameSize = ntohl(frameSizeNetworkOrder);
 
-        // Защита от повреждённых/некорректных данных.
+        // Защита от повреждённых/некорректных данных — не выделяем
+        // безумные объёмы памяти по битому заголовку.
         constexpr uint32_t MAX_REASONABLE_FRAME_SIZE = 10 * 1024 * 1024;
 
         if (frameSize == 0 || frameSize > MAX_REASONABLE_FRAME_SIZE)
@@ -133,10 +125,7 @@ public:
 
         outJpegBuffer.resize(frameSize);
 
-        return receiveExact(
-            reinterpret_cast<char*>(outJpegBuffer.data()),
-            frameSize
-        );
+        return receiveExact(reinterpret_cast<char*>(outJpegBuffer.data()), frameSize);
     }
 
     void disconnect()
@@ -181,18 +170,13 @@ public:
     bool pollExitRequested()
     {
         int key = cv::waitKey(1);
-        return key == 'q' || key == 'Q' || key == 27;
+        return key == 'q' || key == 'Q' || key == 27; // 27 = Esc
     }
 };
 
 
 int main(int argc, char* argv[])
 {
-#ifdef _WIN32
-    SetConsoleOutputCP(CP_UTF8);
-    SetConsoleCP(CP_UTF8);
-#endif
-
     // IP Raspberry Pi можно передать аргументом:
     //   video_client.exe 10.122.144.232
     std::string serverIp = "10.122.144.232";
@@ -206,7 +190,6 @@ int main(int argc, char* argv[])
 
 #ifdef _WIN32
     WSADATA wsaData;
-
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
     {
         std::cerr << "WSAStartup failed." << std::endl;
@@ -253,7 +236,5 @@ int main(int argc, char* argv[])
 #endif
 
     std::cout << "Клиент видео завершён." << std::endl;
-
     return 0;
 }
-```
