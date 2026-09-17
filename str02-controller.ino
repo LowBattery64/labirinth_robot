@@ -1,27 +1,9 @@
+
 // ============================================================
 // OmegaBot — контроллер робота на плате ARP-DEK-STR-02
-// ------------------------------------------------------------
-// Заменяет старую пару "low_level.ino (Arduino) + labirinth_server.cpp
-// (Raspberry Pi -> отдельный Arduino по serial)" на новой аппаратной
-// платформе: здесь моторы, ИК/УЗ/энкодеры висят прямо на одной
-// Mega-совместимой плате. Raspberry Pi по-прежнему шлёт команды
-// движения и читает телеметрию, но напрямую по USB (нативный Serial),
-// без отдельного Arduino посередине.
-//
-// Видео теперь идёт НЕ через эту плату: используется обычная
-// USB-веб-камера, подключённая напрямую к Raspberry Pi и раздаваемая
-// оператору через video_server.cpp/video_client.cpp (см. readme.md).
-// Модуль TrackingCam и его библиотека этой сборке не нужны, поэтому
-// весь код, завязанный на TrackingCamDxlUart, отсюда убран.
-//
-// ПОДТВЕРЖДЁННЫЙ КОНФЛИКТ ПИНОВ: на этой плате D0/D1 физически заняты
-// аппаратным UART0, через который идёт связь с Raspberry Pi по USB —
-// висевшие там ИК-датчики (центральный/левый) пришлось отключить и
-// физически освободить эти пины. Ниже оставлен только тот ИК-датчик,
-// что был на D2 (не конфликтует). Если по факту сохранился ещё один
-// датчик на каком-то другом свободном пине — надо будет добавить его
-// в класс Pins/IRSensorArray и в sendTelemetry() ниже.
 // ============================================================
+
+#include "TrackingCamDxlUart.h"
 
 
 // ============================================================
@@ -31,26 +13,23 @@
 class Pins
 {
 public:
-    // Моторы (из методички для этой же платы)
     static const uint8_t M1_DIR = 45;
     static const uint8_t M1_SPEED = 44;
+
     static const uint8_t M2_DIR = 47;
     static const uint8_t M2_SPEED = 46;
 
-    // ИК-датчик препятствий. D0 и D1 заняты Serial-связью с Raspberry Pi
-    // (см. предупреждение выше) и больше не используются под датчики -
-    // остался только тот, что был на D2.
     static const uint8_t IR_FRONT = 2;
 
-    // УЗ-дальномеры (Trig, Echo)
     static const uint8_t US_CENTER_TRIG = 3;
     static const uint8_t US_CENTER_ECHO = 4;
+
     static const uint8_t US_LEFT_TRIG = 5;
     static const uint8_t US_LEFT_ECHO = 6;
+
     static const uint8_t US_RIGHT_TRIG = 7;
     static const uint8_t US_RIGHT_ECHO = 8;
 
-    // см. класс SpeedSensorArray.
     static const uint8_t ENCODER_LEFT = 9;
     static const uint8_t ENCODER_RIGHT = 10;
 };
@@ -67,12 +46,13 @@ public:
     {
         pinMode(Pins::M1_DIR, OUTPUT);
         pinMode(Pins::M1_SPEED, OUTPUT);
+
         pinMode(Pins::M2_DIR, OUTPUT);
         pinMode(Pins::M2_SPEED, OUTPUT);
+
         stop();
     }
 
-    // speed: -255..255 (знак задаёт направление)
     void setLeft(int speed)
     {
         setMotor(Pins::M1_DIR, Pins::M1_SPEED, speed);
@@ -93,6 +73,7 @@ private:
     void setMotor(uint8_t dirPin, uint8_t speedPin, int speed)
     {
         speed = constrain(speed, -255, 255);
+
         digitalWrite(dirPin, speed >= 0 ? HIGH : LOW);
         analogWrite(speedPin, abs(speed));
     }
@@ -100,13 +81,7 @@ private:
 
 
 // ============================================================
-// ИК-датчик препятствий
-// ------------------------------------------------------------
-// Раньше их было три (центр/лево/право на D0/D1/D2), но D0 и D1
-// пришлось освободить под Serial-связь с Raspberry Pi - остался
-// только один, на D2. Класс всё равно оставлен отдельным - если
-// вернёте датчики на другие свободные пины, добавить их сюда будет
-// одной строкой.
+// ИК-датчик
 // ============================================================
 
 class IRSensorArray
@@ -117,7 +92,10 @@ public:
         pinMode(Pins::IR_FRONT, INPUT);
     }
 
-    bool frontBlocked() const { return digitalRead(Pins::IR_FRONT) == HIGH; }
+    bool frontBlocked() const
+    {
+        return digitalRead(Pins::IR_FRONT) == HIGH;
+    }
 };
 
 
@@ -133,7 +111,8 @@ private:
 
 public:
     UltrasonicSensor(uint8_t trig, uint8_t echo)
-        : trigPin(trig), echoPin(echo)
+        : trigPin(trig),
+          echoPin(echo)
     {
     }
 
@@ -143,18 +122,18 @@ public:
         pinMode(echoPin, INPUT);
     }
 
-    // Возвращает расстояние в см, либо -1, если эхо не пришло
-    // (объект вне диапазона).
     long readCm() const
     {
         digitalWrite(trigPin, LOW);
         delayMicroseconds(2);
+
         digitalWrite(trigPin, HIGH);
         delayMicroseconds(10);
+
         digitalWrite(trigPin, LOW);
 
-        // Таймаут ~20 мс -> максимум примерно 3-4 м дальности.
-        unsigned long duration = pulseIn(echoPin, HIGH, 20000UL);
+        unsigned long duration =
+            pulseIn(echoPin, HIGH, 20000UL);
 
         if (duration == 0)
         {
@@ -164,6 +143,7 @@ public:
         return duration / 29 / 2;
     }
 };
+
 
 class UltrasonicArray
 {
@@ -187,21 +167,23 @@ public:
         right.begin();
     }
 
-    // Читаем по очереди с небольшой паузой, чтобы эхо одного
-    // датчика не поймал соседний (см. методичку, раздел про УЗ).
     void readAll(long &centerCm, long &leftCm, long &rightCm) const
     {
         centerCm = center.readCm();
+
         delay(10);
+
         leftCm = left.readCm();
+
         delay(10);
+
         rightCm = right.readCm();
     }
 };
 
 
 // ============================================================
-// Датчики скорости колёс (энкодеры), опрос без прерываний
+// Энкодеры
 // ============================================================
 
 class SpeedSensorArray
@@ -209,13 +191,16 @@ class SpeedSensorArray
 private:
     bool lastLeftState;
     bool lastRightState;
+
     volatile unsigned long leftPulses;
     volatile unsigned long rightPulses;
 
 public:
     SpeedSensorArray()
-        : lastLeftState(false), lastRightState(false),
-          leftPulses(0), rightPulses(0)
+        : lastLeftState(false),
+          lastRightState(false),
+          leftPulses(0),
+          rightPulses(0)
     {
     }
 
@@ -223,31 +208,46 @@ public:
     {
         pinMode(Pins::ENCODER_LEFT, INPUT);
         pinMode(Pins::ENCODER_RIGHT, INPUT);
-        lastLeftState = digitalRead(Pins::ENCODER_LEFT) == HIGH;
-        lastRightState = digitalRead(Pins::ENCODER_RIGHT) == HIGH;
+
+        lastLeftState =
+            digitalRead(Pins::ENCODER_LEFT) == HIGH;
+
+        lastRightState =
+            digitalRead(Pins::ENCODER_RIGHT) == HIGH;
     }
 
-    // Вызывать как можно чаще из loop() — ловим фронты вручную,
-    // т.к. аппаратные прерывания на этих пинах на ATmega2560 недоступны.
     void poll()
     {
-        bool leftState = digitalRead(Pins::ENCODER_LEFT) == HIGH;
+        bool leftState =
+            digitalRead(Pins::ENCODER_LEFT) == HIGH;
+
         if (leftState && !lastLeftState)
         {
             leftPulses++;
         }
+
         lastLeftState = leftState;
 
-        bool rightState = digitalRead(Pins::ENCODER_RIGHT) == HIGH;
+        bool rightState =
+            digitalRead(Pins::ENCODER_RIGHT) == HIGH;
+
         if (rightState && !lastRightState)
         {
             rightPulses++;
         }
+
         lastRightState = rightState;
     }
 
-    unsigned long leftPulseCount() const { return leftPulses; }
-    unsigned long rightPulseCount() const { return rightPulses; }
+    unsigned long leftPulseCount() const
+    {
+        return leftPulses;
+    }
+
+    unsigned long rightPulseCount() const
+    {
+        return rightPulses;
+    }
 
     void resetCounters()
     {
@@ -258,18 +258,68 @@ public:
 
 
 // ============================================================
-// Простой протокол управления по Serial (от Raspberry Pi)
-// ------------------------------------------------------------
-// 'F' — вперёд, 'B' — назад, 'L' — влево, 'R' — вправо, 'S' — стоп.
-// Тот же однобайтовый протокол, что использовался в старой схеме
-// (labirinth_server.cpp -> Arduino), для совместимости с уже
-// написанным серверным кодом на Pi.
+// TrackingCam
+// ============================================================
+
+class CameraTracker
+{
+private:
+    static const uint8_t CAM_ID = 51;
+    static const uint8_t SERIAL_PORT = 1;
+    static const uint32_t BAUD_RATE = 115200;
+    static const uint8_t TIMEOUT_MS = 30;
+
+    static const uint8_t MAX_OBJECTS = 5;
+
+    TrackingCamDxlUart cam;
+
+public:
+    void begin()
+    {
+        cam.init(
+            CAM_ID,
+            SERIAL_PORT,
+            BAUD_RATE,
+            TIMEOUT_MS
+        );
+    }
+
+    uint8_t readObjects()
+    {
+        return cam.readObjects(MAX_OBJECTS);
+    }
+
+    uint8_t readBlobs()
+    {
+        return cam.readBlobs(MAX_OBJECTS);
+    }
+
+    bool hasObject() const
+    {
+        return cam.obj[0].obj_size > 0;
+    }
+
+    int objectX() const
+    {
+        return cam.obj[0].cx;
+    }
+
+    int objectY() const
+    {
+        return cam.obj[0].cy;
+    }
+};
+
+
+// ============================================================
+// Команды управления
 // ============================================================
 
 class CommandProtocol
 {
 private:
-    static const int DEFAULT_SPEED = 200;
+    static const int DEFAULT_SPEED = 80;
+
     MotorController &motors;
 
 public:
@@ -289,27 +339,39 @@ public:
 
         switch (command)
         {
+        // Фактическое движение вперёд:
+        // раньше это выполнялось командой R.
         case 'F':
             motors.setLeft(DEFAULT_SPEED);
-            motors.setRight(DEFAULT_SPEED);
+            motors.setRight(-DEFAULT_SPEED);
             break;
+
+        // Фактическое движение назад:
+        // раньше это выполнялось командой L.
         case 'B':
             motors.setLeft(-DEFAULT_SPEED);
-            motors.setRight(-DEFAULT_SPEED);
-            break;
-        case 'L':
-            motors.setLeft(-DEFAULT_SPEED);
             motors.setRight(DEFAULT_SPEED);
             break;
-        case 'R':
+
+        // Поворот налево:
+        // раньше это выполнялось командой B.
+        case 'L':
             motors.setLeft(DEFAULT_SPEED);
+            motors.setRight(DEFAULT_SPEED);
+            break;
+
+        // Поворот направо:
+        // раньше это выполнялось командой F.
+        case 'R':
+            motors.setLeft(-DEFAULT_SPEED);
             motors.setRight(-DEFAULT_SPEED);
             break;
+
         case 'S':
             motors.stop();
             break;
+
         default:
-            // Неизвестная команда - игнорируем, не трогаем моторы.
             break;
         }
     }
@@ -317,22 +379,36 @@ public:
 
 
 // ============================================================
-// Точка входа
+// Объекты системы
 // ============================================================
 
 MotorController motors;
 IRSensorArray irSensors;
 UltrasonicArray ultrasonicSensors;
 SpeedSensorArray speedSensors;
+CameraTracker camera;
 CommandProtocol commandProtocol(motors);
 
 unsigned long lastTelemetryMs = 0;
+
 const unsigned long TELEMETRY_PERIOD_MS = 200;
+
+
+// ============================================================
+// Телеметрия
+// ============================================================
 
 void sendTelemetry()
 {
-    long usCenter, usLeft, usRight;
-    ultrasonicSensors.readAll(usCenter, usLeft, usRight);
+    long usCenter;
+    long usLeft;
+    long usRight;
+
+    ultrasonicSensors.readAll(
+        usCenter,
+        usLeft,
+        usRight
+    );
 
     Serial.print("T,IR,");
     Serial.print(irSensors.frontBlocked());
@@ -349,35 +425,49 @@ void sendTelemetry()
     Serial.print(',');
     Serial.print(speedSensors.rightPulseCount());
 
+    // Опрос TrackingCam временно отключён для диагностики.
+
     Serial.println();
 }
+
+
+// ============================================================
+// Инициализация
+// ============================================================
 
 void setup()
 {
     Serial.begin(115200);
 
     motors.begin();
+
     irSensors.begin();
+
     ultrasonicSensors.begin();
+
     speedSensors.begin();
+
+    camera.begin();
 }
+
+
+// ============================================================
+// Основной цикл
+// ============================================================
 
 void loop()
 {
     commandProtocol.poll();
 
-    // Опрашиваем энкодеры максимально часто - помним, что pulseIn()
-    // внутри sendTelemetry() блокирует выполнение на время УЗ-замера,
-    // так что быстрые импульсы между вызовами loop() всё равно можно
-    // пропустить. Для более точной одометрии в будущем стоит либо
-    // разнести УЗ-опрос по времени (например, по одному датчику за цикл),
-    // либо перенести правый энкодер (D10) на аппаратное прерывание PCINT.
     speedSensors.poll();
 
     unsigned long now = millis();
+
     if (now - lastTelemetryMs >= TELEMETRY_PERIOD_MS)
     {
         lastTelemetryMs = now;
+
         sendTelemetry();
     }
 }
+
