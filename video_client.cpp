@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <windows.h>
 
 #ifdef _WIN32
     #include <winsock2.h>
@@ -187,6 +188,10 @@ int main(int argc, char* argv[])
     }
 
     const int SERVER_PORT = 5001;
+#ifdef _WIN32
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+#endif
 
 #ifdef _WIN32
     WSADATA wsaData;
