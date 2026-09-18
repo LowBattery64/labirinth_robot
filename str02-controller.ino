@@ -1,4 +1,3 @@
-
 // ============================================================
 // OmegaBot — контроллер робота на плате ARP-DEK-STR-02
 // ============================================================
@@ -339,34 +338,31 @@ public:
 
         switch (command)
         {
-        // Фактическое движение вперёд:
-        // раньше это выполнялось командой R.
+        // Движение вперёд
         case 'F':
             motors.setLeft(DEFAULT_SPEED);
             motors.setRight(-DEFAULT_SPEED);
             break;
 
-        // Фактическое движение назад:
-        // раньше это выполнялось командой L.
+        // Движение назад
         case 'B':
             motors.setLeft(-DEFAULT_SPEED);
             motors.setRight(DEFAULT_SPEED);
             break;
 
-        // Поворот налево:
-        // раньше это выполнялось командой B.
+        // Поворот налево
         case 'L':
-            motors.setLeft(DEFAULT_SPEED);
-            motors.setRight(DEFAULT_SPEED);
-            break;
-
-        // Поворот направо:
-        // раньше это выполнялось командой F.
-        case 'R':
             motors.setLeft(-DEFAULT_SPEED);
             motors.setRight(-DEFAULT_SPEED);
             break;
 
+        // Поворот направо
+        case 'R':
+            motors.setLeft(DEFAULT_SPEED);
+            motors.setRight(DEFAULT_SPEED);
+            break;
+
+        // Остановка
         case 'S':
             motors.stop();
             break;
@@ -470,4 +466,3 @@ void loop()
         sendTelemetry();
     }
 }
-
