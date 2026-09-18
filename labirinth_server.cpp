@@ -787,8 +787,6 @@ private:
         serialController.sendCommand('S');
 
         logger.writeEvent("Робот остановлен.");
-
-        logger.writeEvent("Робот остановлен.");
     }
 };
 
