@@ -367,13 +367,14 @@ int main(int argc, char* argv[])
                 default:
                     break;
             }
+        }
 
-            if (!running)
-            {
-                break;
-            }
+        if (!running)
+        {
+            break;
+        }
 
-            if (client.sendCommand(currentCommand))
+        if (client.sendCommand(currentCommand))
         {
             if (currentCommand != 'S')
             {
