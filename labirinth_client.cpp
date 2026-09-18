@@ -30,6 +30,83 @@
 #endif
 
 
+class ClientLogger
+{
+private:
+    std::ofstream eventLog;
+    std::ofstream telemetryLog;
+
+public:
+    bool initialize()
+    {
+        eventLog.open("operator.log", std::ios::app);
+        telemetryLog.open("telemetry.csv", std::ios::app);
+
+        if (!eventLog.is_open() || !telemetryLog.is_open())
+        {
+            return false;
+        }
+
+        if (telemetryLog.tellp() == std::streampos(0))
+        {
+            telemetryLog
+                << "timestamp,telemetry"
+                << std::endl;
+        }
+
+        writeEvent("Операторский клиент запущен.");
+
+        return true;
+    }
+
+    void writeEvent(const std::string& message)
+    {
+        if (eventLog.is_open())
+        {
+            eventLog
+                << timestamp()
+                << " | "
+                << message
+                << std::endl;
+        }
+    }
+
+    void writeTelemetry(const std::string& telemetry)
+    {
+        if (telemetryLog.is_open())
+        {
+            telemetryLog
+                << timestamp()
+                << ",\""
+                << telemetry
+                << "\""
+                << std::endl;
+        }
+    }
+
+private:
+    std::string timestamp() const
+    {
+        const auto now = std::chrono::system_clock::now();
+        const std::time_t currentTime =
+            std::chrono::system_clock::to_time_t(now);
+
+        std::tm timeInfo{};
+
+#ifdef _WIN32
+        localtime_s(&timeInfo, &currentTime);
+#else
+        localtime_r(&currentTime, &timeInfo);
+#endif
+
+        std::ostringstream output;
+        output << std::put_time(&timeInfo, "%Y-%m-%d %H:%M:%S");
+
+        return output.str();
+    }
+};
+
+
 class TcpClient
 {
 private:
@@ -147,83 +224,6 @@ public:
     ~TcpClient()
     {
         disconnect();
-    }
-};
-
-
-class ClientLogger
-{
-private:
-    std::ofstream eventLog;
-    std::ofstream telemetryLog;
-
-public:
-    bool initialize()
-    {
-        eventLog.open("operator.log", std::ios::app);
-        telemetryLog.open("telemetry.csv", std::ios::app);
-
-        if (!eventLog.is_open() || !telemetryLog.is_open())
-        {
-            return false;
-        }
-
-        if (telemetryLog.tellp() == std::streampos(0))
-        {
-            telemetryLog
-                << "timestamp,telemetry"
-                << std::endl;
-        }
-
-        writeEvent("Операторский клиент запущен.");
-
-        return true;
-    }
-
-    void writeEvent(const std::string& message)
-    {
-        if (eventLog.is_open())
-        {
-            eventLog
-                << timestamp()
-                << " | "
-                << message
-                << std::endl;
-        }
-    }
-
-    void writeTelemetry(const std::string& telemetry)
-    {
-        if (telemetryLog.is_open())
-        {
-            telemetryLog
-                << timestamp()
-                << ",\""
-                << telemetry
-                << "\""
-                << std::endl;
-        }
-    }
-
-private:
-    std::string timestamp() const
-    {
-        const auto now = std::chrono::system_clock::now();
-        const std::time_t currentTime =
-            std::chrono::system_clock::to_time_t(now);
-
-        std::tm timeInfo{};
-
-#ifdef _WIN32
-        localtime_s(&timeInfo, &currentTime);
-#else
-        localtime_r(&currentTime, &timeInfo);
-#endif
-
-        std::ostringstream output;
-        output << std::put_time(&timeInfo, "%Y-%m-%d %H:%M:%S");
-
-        return output.str();
     }
 };
 
