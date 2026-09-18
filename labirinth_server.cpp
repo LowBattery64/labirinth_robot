@@ -686,6 +686,7 @@ private:
     {
         // Безопасное состояние при любом завершении TCP-сессии.
         serialController.sendCommand('S');
+        logger.writeEvent("Робот остановлен.");
     }
 };
 
