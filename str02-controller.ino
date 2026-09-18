@@ -178,6 +178,12 @@ public:
 
         rightCm = right.readCm();
     }
+
+    long readCenterCm() const
+    {
+        return center.readCm();
+    }
+
 };
 
 
@@ -310,6 +316,66 @@ public:
 };
 
 
+
+// ============================================================
+// Безопасность движения
+// ============================================================
+
+class SafetyController
+{
+private:
+    UltrasonicArray &ultrasonicSensors;
+
+    static const long FRONT_OBSTACLE_DISTANCE_CM = 25;
+    static const unsigned long CHECK_PERIOD_MS = 50;
+
+    unsigned long lastCheckMs;
+    bool obstacleAhead;
+
+public:
+    explicit SafetyController(UltrasonicArray &sensorArray)
+        : ultrasonicSensors(sensorArray),
+          lastCheckMs(0),
+          obstacleAhead(false)
+    {
+    }
+
+    void begin()
+    {
+        lastCheckMs = millis();
+        update();
+    }
+
+    void poll()
+    {
+        unsigned long now = millis();
+
+        if (now - lastCheckMs < CHECK_PERIOD_MS)
+        {
+            return;
+        }
+
+        lastCheckMs = now;
+        update();
+    }
+
+    bool isForwardBlocked() const
+    {
+        return obstacleAhead;
+    }
+
+private:
+    void update()
+    {
+        long distanceCm = ultrasonicSensors.readCenterCm();
+
+        obstacleAhead =
+            distanceCm > 0 &&
+            distanceCm <= FRONT_OBSTACLE_DISTANCE_CM;
+    }
+};
+
+
 // ============================================================
 // Команды управления
 // ============================================================
@@ -318,13 +384,31 @@ class CommandProtocol
 {
 private:
     static const int DEFAULT_SPEED = 80;
+    static const unsigned long COMMAND_TIMEOUT_MS = 500;
 
     MotorController &motors;
+    SafetyController &safety;
+
+    unsigned long lastCommandMs;
+    char requestedCommand;
+    bool watchdogStopped;
 
 public:
-    explicit CommandProtocol(MotorController &motorController)
-        : motors(motorController)
+    CommandProtocol(
+        MotorController &motorController,
+        SafetyController &safetyController
+    )
+        : motors(motorController),
+          safety(safetyController),
+          lastCommandMs(0),
+          requestedCommand('S'),
+          watchdogStopped(false)
     {
+    }
+
+    void begin()
+    {
+        lastCommandMs = millis();
     }
 
     void poll()
@@ -336,39 +420,97 @@ public:
 
         char command = Serial.read();
 
+        if (!isValidCommand(command))
+        {
+            return;
+        }
+
+        lastCommandMs = millis();
+        requestedCommand = command;
+        watchdogStopped = false;
+
         switch (command)
         {
-        // Движение вперёд
         case 'F':
-            motors.setLeft(DEFAULT_SPEED);
-            motors.setRight(-DEFAULT_SPEED);
+            if (safety.isForwardBlocked())
+            {
+                motors.stop();
+            }
+            else
+            {
+                motors.setLeft(DEFAULT_SPEED);
+                motors.setRight(-DEFAULT_SPEED);
+            }
             break;
 
-        // Движение назад
         case 'B':
             motors.setLeft(-DEFAULT_SPEED);
             motors.setRight(DEFAULT_SPEED);
             break;
 
-        // Поворот налево
         case 'L':
             motors.setLeft(-DEFAULT_SPEED);
             motors.setRight(-DEFAULT_SPEED);
             break;
 
-        // Поворот направо
         case 'R':
             motors.setLeft(DEFAULT_SPEED);
             motors.setRight(DEFAULT_SPEED);
             break;
 
-        // Остановка
         case 'S':
             motors.stop();
             break;
+        }
+    }
+
+    void safetyPoll()
+    {
+        if (requestedCommand == 'F' && safety.isForwardBlocked())
+        {
+            motors.stop();
+        }
+    }
+
+    void watchdogPoll()
+    {
+        unsigned long now = millis();
+
+        if (
+            requestedCommand != 'S' &&
+            now - lastCommandMs > COMMAND_TIMEOUT_MS
+        )
+        {
+            motors.stop();
+            requestedCommand = 'S';
+            watchdogStopped = true;
+        }
+    }
+
+    char getRequestedCommand() const
+    {
+        return requestedCommand;
+    }
+
+    bool wasStoppedByWatchdog() const
+    {
+        return watchdogStopped;
+    }
+
+private:
+    bool isValidCommand(char command) const
+    {
+        switch (command)
+        {
+        case 'F':
+        case 'B':
+        case 'L':
+        case 'R':
+        case 'S':
+            return true;
 
         default:
-            break;
+            return false;
         }
     }
 };
@@ -383,7 +525,8 @@ IRSensorArray irSensors;
 UltrasonicArray ultrasonicSensors;
 SpeedSensorArray speedSensors;
 CameraTracker camera;
-CommandProtocol commandProtocol(motors);
+SafetyController safetyController(ultrasonicSensors);
+CommandProtocol commandProtocol(motors, safetyController);
 
 unsigned long lastTelemetryMs = 0;
 
@@ -421,6 +564,15 @@ void sendTelemetry()
     Serial.print(',');
     Serial.print(speedSensors.rightPulseCount());
 
+    Serial.print(",SAFE,");
+    Serial.print(safetyController.isForwardBlocked());
+
+    Serial.print(",CMD,");
+    Serial.print(commandProtocol.getRequestedCommand());
+
+    Serial.print(",WD,");
+    Serial.print(commandProtocol.wasStoppedByWatchdog());
+
     // Опрос TrackingCam временно отключён для диагностики.
 
     Serial.println();
@@ -443,6 +595,10 @@ void setup()
 
     speedSensors.begin();
 
+    safetyController.begin();
+
+    commandProtocol.begin();
+
     camera.begin();
 }
 
@@ -456,6 +612,12 @@ void loop()
     commandProtocol.poll();
 
     speedSensors.poll();
+
+    safetyController.poll();
+
+    commandProtocol.safetyPoll();
+
+    commandProtocol.watchdogPoll();
 
     unsigned long now = millis();
 
