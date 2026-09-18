@@ -338,6 +338,41 @@ int main(int argc, char* argv[])
 
         if (key != 0)
         {
+            switch (key)
+            {
+                case 'w': case 'W': case 'f': case 'F':
+                    currentCommand = 'F';
+                    break;
+
+                case 's': case 'S': case 'b': case 'B':
+                    currentCommand = 'B';
+                    break;
+
+                case 'a': case 'A': case 'l': case 'L':
+                    currentCommand = 'L';
+                    break;
+
+                case 'd': case 'D': case 'r': case 'R':
+                    currentCommand = 'R';
+                    break;
+
+                case ' ':
+                    currentCommand = 'S';
+                    break;
+
+                case 'q': case 'Q':
+                    running = false;
+                    break;
+
+                default:
+                    break;
+            }
+
+            if (!running)
+            {
+                break;
+            }
+
             if (client.sendCommand(currentCommand))
         {
             if (currentCommand != 'S')
@@ -372,7 +407,6 @@ int main(int argc, char* argv[])
     {
         telemetryThread.join();
     }
-    client.disconnect();
 
 #ifdef _WIN32
     WSACleanup();
