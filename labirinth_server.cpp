@@ -23,6 +23,11 @@
 #include <cerrno>
 #include <algorithm>
 #include <functional>
+#include <fstream>
+#include <chrono>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
 
 #include <unistd.h>
 #include <fcntl.h>
@@ -32,6 +37,83 @@
 #include <sys/select.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+
+
+class RobotLogger
+{
+private:
+    std::ofstream eventLog;
+    std::ofstream telemetryLog;
+
+public:
+    bool initialize()
+    {
+        eventLog.open("robot.log", std::ios::app);
+        telemetryLog.open("telemetry.csv", std::ios::app);
+
+        if (!eventLog.is_open() || !telemetryLog.is_open())
+        {
+            return false;
+        }
+
+        if (telemetryLog.tellp() == std::streampos(0))
+        {
+            telemetryLog
+                << "timestamp,telemetry"
+                << std::endl;
+        }
+
+        writeEvent("Сервер запущен.");
+
+        return true;
+    }
+
+    void writeEvent(const std::string& message)
+    {
+        if (eventLog.is_open())
+        {
+            eventLog
+                << timestamp()
+                << " | "
+                << message
+                << std::endl;
+        }
+    }
+
+    void writeTelemetry(const std::string& telemetry)
+    {
+        if (telemetryLog.is_open())
+        {
+            telemetryLog
+                << timestamp()
+                << ",\""
+                << telemetry
+                << "\""
+                << std::endl;
+        }
+    }
+
+private:
+    std::string timestamp() const
+    {
+        const auto now = std::chrono::system_clock::now();
+        const std::time_t currentTime =
+            std::chrono::system_clock::to_time_t(now);
+
+        std::tm timeInfo{};
+
+#ifdef _WIN32
+        localtime_s(&timeInfo, &currentTime);
+#else
+        localtime_r(&currentTime, &timeInfo);
+#endif
+
+        std::ostringstream output;
+        output << std::put_time(&timeInfo, "%Y-%m-%d %H:%M:%S");
+
+        return output.str();
+    }
+};
 
 
 class SerialController
@@ -494,6 +576,7 @@ private:
     SerialController serialController;
 
     CommandController commandController;
+    RobotLogger logger;
 
 public:
     RobotServer()
@@ -513,6 +596,14 @@ public:
 
         if (!initialize())
         {
+            return 1;
+        }
+
+        if (!logger.initialize())
+        {
+            std::cerr
+                << "Не удалось открыть файлы журналов."
+                << std::endl;
             return 1;
         }
 
@@ -652,6 +743,10 @@ private:
                 << "Команда: "
                 << command
                 << std::endl;
+
+            logger.writeEvent(
+                std::string("Команда: ") + command
+            );
         }
         else
         {
@@ -667,6 +762,8 @@ private:
     {
         std::cout << "Телеметрия: " << line << std::endl;
 
+        logger.writeTelemetry(line);
+
         std::string withNewline = line + "\n";
 
         networkController.sendData(
@@ -680,12 +777,16 @@ private:
         std::cout
             << "PC отключён."
             << std::endl;
+
+        logger.writeEvent("PC отключён.");
     }
 
     void stopRobot()
     {
         // Безопасное состояние при любом завершении TCP-сессии.
         serialController.sendCommand('S');
+
+        logger.writeEvent("Робот остановлен.");
 
         logger.writeEvent("Робот остановлен.");
     }
