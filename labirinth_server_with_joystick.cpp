@@ -7,6 +7,7 @@
 #include <string>
 #include <thread>
 #include <chrono>
+#include <atomic>
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "Xinput.lib")
@@ -98,6 +99,44 @@ public:
             sizeof(command),
             0
         ) != SOCKET_ERROR;
+    }
+
+    void receiveTelemetry(std::atomic<bool>& running)
+    {
+        std::string line;
+        char receivedCharacter;
+
+        while (running)
+        {
+            int received = recv(
+                connectionSocket,
+                &receivedCharacter,
+                1,
+                0
+            );
+
+            if (received <= 0)
+            {
+                return;
+            }
+
+            if (receivedCharacter == '\n')
+            {
+                if (!line.empty())
+                {
+                    std::cout
+                        << "Телеметрия: "
+                        << line
+                        << std::endl;
+
+                    line.clear();
+                }
+            }
+            else if (receivedCharacter != '\r')
+            {
+                line += receivedCharacter;
+            }
+        }
     }
 
     void closeConnection()
@@ -222,10 +261,29 @@ public:
             return 1;
         }
 
+        std::atomic<bool> telemetryRunning(true);
+
+        std::thread telemetryThread(
+            [this, &telemetryRunning]()
+            {
+                networkController.receiveTelemetry(
+                    telemetryRunning
+                );
+                telemetryRunning = false;
+            }
+        );
+
         controlRobot();
 
         stopRobot();
+
+        telemetryRunning = false;
         networkController.closeConnection();
+
+        if (telemetryThread.joinable())
+        {
+            telemetryThread.join();
+        }
 
         return 0;
     }
