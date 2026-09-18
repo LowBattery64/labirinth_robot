@@ -5,6 +5,14 @@
 
 #include <iostream>
 #include <string>
+#include <fstream>
+#include <thread>
+#include <chrono>
+#include <atomic>
+#include <mutex>
+#include <sstream>
+#include <iomanip>
+#include <ctime>
 
 #ifdef _WIN32
     #include <winsock2.h>
@@ -84,6 +92,49 @@ public:
         return sent == 1;
     }
 
+
+    bool receiveTelemetry(ClientLogger& logger, std::atomic<bool>& running)
+    {
+        std::string line;
+        char receivedCharacter;
+
+        while (running)
+        {
+            int received = recv(
+                socketFd,
+                &receivedCharacter,
+                1,
+                0
+            );
+
+            if (received <= 0)
+            {
+                return false;
+            }
+
+            if (receivedCharacter == '\n')
+            {
+                if (!line.empty())
+                {
+                    logger.writeTelemetry(line);
+
+                    std::cout
+                        << "Телеметрия: "
+                        << line
+                        << std::endl;
+
+                    line.clear();
+                }
+            }
+            else if (receivedCharacter != '\r')
+            {
+                line += receivedCharacter;
+            }
+        }
+
+        return true;
+    }
+
     void disconnect()
     {
         if (socketFd >= 0)
@@ -96,6 +147,83 @@ public:
     ~TcpClient()
     {
         disconnect();
+    }
+};
+
+
+class ClientLogger
+{
+private:
+    std::ofstream eventLog;
+    std::ofstream telemetryLog;
+
+public:
+    bool initialize()
+    {
+        eventLog.open("operator.log", std::ios::app);
+        telemetryLog.open("telemetry.csv", std::ios::app);
+
+        if (!eventLog.is_open() || !telemetryLog.is_open())
+        {
+            return false;
+        }
+
+        if (telemetryLog.tellp() == std::streampos(0))
+        {
+            telemetryLog
+                << "timestamp,telemetry"
+                << std::endl;
+        }
+
+        writeEvent("Операторский клиент запущен.");
+
+        return true;
+    }
+
+    void writeEvent(const std::string& message)
+    {
+        if (eventLog.is_open())
+        {
+            eventLog
+                << timestamp()
+                << " | "
+                << message
+                << std::endl;
+        }
+    }
+
+    void writeTelemetry(const std::string& telemetry)
+    {
+        if (telemetryLog.is_open())
+        {
+            telemetryLog
+                << timestamp()
+                << ",\""
+                << telemetry
+                << "\""
+                << std::endl;
+        }
+    }
+
+private:
+    std::string timestamp() const
+    {
+        const auto now = std::chrono::system_clock::now();
+        const std::time_t currentTime =
+            std::chrono::system_clock::to_time_t(now);
+
+        std::tm timeInfo{};
+
+#ifdef _WIN32
+        localtime_s(&timeInfo, &currentTime);
+#else
+        localtime_r(&currentTime, &timeInfo);
+#endif
+
+        std::ostringstream output;
+        output << std::put_time(&timeInfo, "%Y-%m-%d %H:%M:%S");
+
+        return output.str();
     }
 };
 
@@ -174,56 +302,76 @@ int main(int argc, char* argv[])
               << "  Q       — выход\n"
               << std::endl;
 
+    ClientLogger logger;
+
+    if (!logger.initialize())
+    {
+        std::cerr
+            << "Не удалось открыть файлы журналов."
+            << std::endl;
+        client.disconnect();
+
+#ifdef _WIN32
+        WSACleanup();
+#endif
+        return 1;
+    }
+
+    std::atomic<bool> telemetryRunning(true);
+
+    std::thread telemetryThread(
+        [&client, &logger, &telemetryRunning]()
+        {
+            client.receiveTelemetry(logger, telemetryRunning);
+            telemetryRunning = false;
+        }
+    );
+
+    logger.writeEvent("Соединение с Raspberry Pi установлено.");
+
     bool running = true;
+    char currentCommand = 'S';
 
     while (running)
     {
         char key = readKey();
 
-        if (key == 0) continue;
-
-        char command = 0;
-
-        switch (key)
+        if (key != 0)
         {
-            case 'w': case 'W': case 'f': case 'F':
-                command = 'F'; break;
-
-            case 's': case 'S': case 'b': case 'B':
-                command = 'B'; break;
-
-            case 'a': case 'A': case 'l': case 'L':
-                command = 'L'; break;
-
-            case 'd': case 'D': case 'r': case 'R':
-                command = 'R'; break;
-
-            case ' ':
-                command = 'S'; break;
-
-            case 'q': case 'Q':
-                running = false;
-                break;
-
-            default:
-                break;
-        }
-
-        if (command != 0)
+            if (client.sendCommand(currentCommand))
         {
-            if (client.sendCommand(command))
+            if (currentCommand != 'S')
             {
-                std::cout << "Отправлено: " << command << std::endl;
-            }
-            else
-            {
-                std::cerr << "Ошибка отправки." << std::endl;
-                running = false;
+                std::cout
+                    << "Отправлено: "
+                    << currentCommand
+                    << std::endl;
             }
         }
+        else
+        {
+            std::cerr
+                << "Ошибка отправки."
+                << std::endl;
+
+            logger.writeEvent("Соединение с Raspberry Pi потеряно.");
+            running = false;
+        }
+
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(100)
+        );
     }
 
     client.sendCommand('S');
+    logger.writeEvent("Робот остановлен оператором.");
+    telemetryRunning = false;
+    client.disconnect();
+
+    if (telemetryThread.joinable())
+    {
+        telemetryThread.join();
+    }
     client.disconnect();
 
 #ifdef _WIN32
