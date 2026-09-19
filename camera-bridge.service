@@ -1,0 +1,15 @@
+[Unit]
+Description=OmegaBot camera bridge (nanomsg/WebSocket camera -> TCP video for operator)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Поправьте IP камеры и, если нужна запись, добавьте --record-to /home/pi/omegabot_recordings
+ExecStart=/usr/bin/python3 /home/pi/labirinth_robot/camera_bridge.py --camera-ip 10.109.150.34
+Restart=always
+RestartSec=3
+User=pi
+
+[Install]
+WantedBy=multi-user.target
