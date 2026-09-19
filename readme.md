@@ -216,12 +216,69 @@ g++ -std=c++17 -Wall -Wextra -o labirinth_client.exe labirinth_client.cpp -lws2_
 
 ## 📷 7.5. Видео с робота (опционально, но по умолчанию — да)
 
-Видео идёт по **отдельному** каналу (порт 5001) и **отдельными**
-программами — `video_server.cpp` / `video_client.cpp`. Управление
-(`labirinth_server` / `labirinth_client`) при этом работает точно
-так же, как раньше, и его можно использовать без видео вообще.
+Видео идёт по **отдельному** каналу (порт 5001), отдельно от управления
+(`labirinth_server` / `labirinth_client`), которое работает точно так же
+и без видео.
 
-### 7.5.1. Подключить USB-камеру к Raspberry Pi
+**Текущая камера на роботе — не обычная USB-веб-камера.** Это сетевая
+камера, которая сама подключается к вашей Wi-Fi сети (а не раздаёт
+свою) и публикует кадры через nanomsg PUB поверх WebSocket (порт 5557).
+Смотреть видео "как есть" можно только вручную, открыв `http://IP_КАМЕРЫ/`
+в браузере — это и должен заменить `camera_bridge.py` ниже.
+
+### 7.5.1. Мост камера → оператор (`camera_bridge.py`)
+
+Это Python-скрипт на Raspberry Pi, который сам подключается к камере,
+вычленяет JPEG-кадры из её потока и раздаёт их дальше **тем же
+протоколом**, что уже понимает `video_client.cpp` (порт 5001) — на
+стороне ПК менять ничего не нужно. Подробно, что и почему, написано
+в комментариях самого файла `camera_bridge.py`.
+
+Установка зависимостей на Raspberry Pi:
+
+```bash
+pip install --break-system-packages websocket-client opencv-python
+```
+
+Запуск:
+
+```bash
+python3 camera_bridge.py --camera-ip IP_КАМЕРЫ
+```
+
+Если IP камеры не 10.109.150.34 (текущий адрес в вашей сети) — уточните
+командой `--camera-ip`.
+
+Запись видео (задел под требование "чёрный ящик") — необязательный
+флаг, файлы .avi (кодек MJPG) ротируются по времени (по умолчанию
+каждые 10 минут):
+
+```bash
+python3 camera_bridge.py --camera-ip IP_КАМЕРЫ --record-to /home/pi/omegabot_recordings
+```
+
+**Чтобы не запускать это вручную каждый раз** — рядом лежит
+`camera-bridge.service`, юнит для systemd. Поправьте в нём путь к
+скрипту и IP камеры, затем:
+
+```bash
+sudo cp camera-bridge.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now camera-bridge
+```
+
+После этого мост будет сам подниматься при загрузке Raspberry Pi и
+переподключаться к камере при обрыве связи — руками ничего открывать
+не нужно.
+
+### 7.5.2. Если вместо сетевой камеры используется обычная USB-камера
+
+Раздел ниже (7.5.3–7.5.6) — старый путь для обычной USB-веб-камеры
+через `video_server.cpp`/OpenCV. Он не подходит для текущей сетевой
+камеры (см. 7.5.1), но оставлен на случай, если вернётесь к обычной
+веб-камере.
+
+### 7.5.3. Подключить USB-камеру к Raspberry Pi
 
 Обычная USB-веб-камера. Проверить, что плата её видит:
 
@@ -232,14 +289,14 @@ ls /dev/video*
 Если устройство не `/dev/video0` — в `video_server.cpp` в классе
 `VideoSettings` поменять `CAMERA_INDEX` на нужный номер.
 
-### 7.5.2. Установить OpenCV на Raspberry Pi
+### 7.5.4. Установить OpenCV на Raspberry Pi
 
 ```bash
 sudo apt update
 sudo apt install -y libopencv-dev pkg-config
 ```
 
-### 7.5.3. Собрать видео-сервер на Raspberry Pi
+### 7.5.5. Собрать видео-сервер на Raspberry Pi
 
 ```bash
 cd ~/labirinth_robot
@@ -254,7 +311,7 @@ g++ -std=c++17 -Wall -Wextra -o video_server video_server.cpp \
 >     video_server.cpp -lopencv_core -lopencv_imgcodecs -lopencv_videoio
 > ```
 
-### 7.5.4. Установить OpenCV на ПК (Windows)
+### 7.5.6. Установить OpenCV на ПК (Windows)
 
 Проще всего через [vcpkg](https://github.com/microsoft/vcpkg):
 
@@ -265,21 +322,18 @@ cd vcpkg
 .\vcpkg install opencv:x64-windows
 ```
 
-### 7.5.5. Собрать видео-клиент на ПК
+### 7.5.7. Собрать видео-клиент на ПК
 
 ```powershell
 cl /EHsc /std:c++17 video_client.cpp /I D:\OpenCV\opencv\build\include /link /LIBPATH:D:\OpenCV\opencv\build\x64\vc12\lib opencv_world300.lib ws2_32.lib
 ```
 
 
-### 7.5.6. Запуск
+### 7.5.8. Запуск (любой из двух вариантов источника видео)
 
-На Raspberry Pi (в отдельном окне/сессии SSH от `labirinth_server`):
-
-```bash
-cd ~/labirinth_robot
-./video_server
-```
+На Raspberry Pi (в отдельном окне/сессии SSH от `labirinth_server`) —
+`python3 camera_bridge.py --camera-ip IP_КАМЕРЫ` (текущая камера) либо
+`./video_server` (если это обычная USB-камера).
 
 На ПК (в отдельном окне от `labirinth_client.exe`):
 
