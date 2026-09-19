@@ -1,44 +1,22 @@
 #!/usr/bin/env python3
 """
-OmegaBot — мост между камерой (nanomsg PUB поверх WebSocket) и оператором.
-==========================================================================
+OmegaBot — мост между TrackingCam3 и оператором.
 
-Камера больше не раздаёт свою Wi-Fi сеть и не отдаёт видео по USB — она
-теперь клиент вашей сети и публикует кадры через nanomsg PUB-сокет,
-завёрнутый в WebSocket (порт 5557, сабпротокол "pub.sp.nanomsg.org").
-Единственный штатный способ посмотреть видео — открыть http://<IP камеры>/
-в браузере, что не годится ни для автоматики, ни для записи.
+Камера публикует сообщения nanomsg PUB поверх WebSocket:
+    ws://<camera-ip>:5557
+    subprotocol: pub.sp.nanomsg.org
 
-Этот скрипт запускается на Raspberry Pi и делает три вещи:
-  1. Подключается к камере по WebSocket (переиспользует уже проверенный
-     вами способ подключения — то же соединение, что в вашем тестовом
-     скрипте), и сама переподключается при обрыве связи.
-  2. Разбирает поток сообщений camera, вычленяет из них JPEG-кадры
-     (ищет по магическим байтам начала/конца JPEG, а не по жёстко
-     зашитому смещению — так надёжнее, т.к. мы не знаем формат
-     служебных заголовков камеры на 100%).
-  3. Отдаёт эти JPEG-кадры оператору тем же протоколом, что уже понимает
-     video_client.cpp — [4 байта размер, big-endian][JPEG-данные] по TCP,
-     порт 5001. Со стороны ПК-клиента менять ничего не нужно.
-     Опционально пишет кадры на диск (см. класс FrameRecorder) —
-     задел под требование "чёрный ящик" из общих требований проекта.
+Формат проверенного сообщения с видеокадром:
+    32 байта служебного заголовка
+    JPEG 640x480
+    остальные служебные данные
 
-Почему на Python, а не на C++, как остальной проект: у вас уже есть
-рабочее, проверенное на реальной камере подключение через
-`websocket-client` (тестовый скрипт из чата). Переизобретать
-nanomsg-over-websocket на C++ без библиотеки, которую можно было бы
-сразу проверить на этом железе, — лишний риск. Если потребуется
-единообразие языка с остальным проектом, этот мост можно будет
-переписать на C++ (например, на связке libwebsockets + сырой разбор
-кадра), когда протокол камеры будет проверен и стабилен.
+JPEG начинается с FF D8 на смещении 32. Для окончания кадра
+используется первое FF D9 после начала JPEG.
 
-Зависимости:
-    pip install websocket-client opencv-python
-
-Запуск:
-    python3 camera_bridge.py --camera-ip 10.109.150.34
-
-Автозапуск без ручного вмешательства — см. camera-bridge.service рядом.
+Оператор получает кадры по TCP:
+    [4 байта размера, big-endian][JPEG]
+на порту 5001.
 """
 
 import argparse
@@ -61,33 +39,36 @@ logging.basicConfig(
 logger = logging.getLogger("camera_bridge")
 
 
-def extract_jpeg_frame(payload: bytes) -> Optional[bytes]:
-    """
-    Достаёт JPEG-изображение из сырого сообщения камеры, если оно там
-    есть. Ищем магические байты начала (FF D8) и конца (FF D9) JPEG,
-    а не полагаемся на конкретную длину заголовка камеры — так надёжнее
-    (заголовок мог быть виден только частично в вашем тестовом логе).
-    Возвращает None, если сообщение не похоже на кадр (это, скорее
-    всего, одно из двух служебных сообщений — 201 или 32 байта).
-    """
-    start = payload.find(b"\xff\xd8")
-    if start < 0:
-        return None
+class CameraFrameParser:
+    """Извлекает JPEG из проверенного бинарного сообщения TrackingCam3."""
 
-    end = payload.rfind(b"\xff\xd9")
-    if end < 0 or end < start:
-        return None
+    JPEG_OFFSET = 32
+    JPEG_START = b"\xff\xd8"
+    JPEG_END = b"\xff\xd9"
 
-    return payload[start:end + 2]
+    @classmethod
+    def extract_jpeg(cls, payload: bytes) -> Optional[bytes]:
+        if len(payload) <= cls.JPEG_OFFSET:
+            return None
+
+        if payload[cls.JPEG_OFFSET:cls.JPEG_OFFSET + 2] != cls.JPEG_START:
+            return None
+
+        end = payload.find(cls.JPEG_END, cls.JPEG_OFFSET + 2)
+
+        if end < 0:
+            return None
+
+        jpeg = payload[cls.JPEG_OFFSET:end + 2]
+
+        if len(jpeg) < 100:
+            return None
+
+        return jpeg
 
 
 class NanomsgCameraClient:
-    """
-    Подключение к камере по WebSocket (nanomsg PUB, sub-протокол
-    pub.sp.nanomsg.org) с автоматическим переподключением при обрыве —
-    соответствует требованию "внезапная потеря связи -> продолжение
-    работы" из общих требований проекта.
-    """
+    """Подключение к PUB WebSocket камеры с автоматическим reconnect."""
 
     PROTOCOL = "pub.sp.nanomsg.org"
 
@@ -98,11 +79,6 @@ class NanomsgCameraClient:
         self._socket: Optional[websocket.WebSocket] = None
 
     def frames(self):
-        """
-        Бесконечный генератор JPEG-кадров. Сам держит соединение живым:
-        при обрыве — переподключается и продолжает отдавать кадры дальше,
-        не роняя вызывающий код.
-        """
         while True:
             try:
                 self._connect()
@@ -145,26 +121,18 @@ class NanomsgCameraClient:
                 raise ConnectionError("Камера закрыла соединение.")
 
             if not isinstance(data, (bytes, bytearray)):
-                # Текстовое служебное сообщение - не кадр, пропускаем.
                 continue
 
-            frame = extract_jpeg_frame(data)
+            frame = CameraFrameParser.extract_jpeg(data)
 
-            if frame is not None:
-                yield frame
+            if frame is None:
+                continue
+
+            yield frame
 
 
 class TcpFrameBroadcaster:
-    """
-    TCP-сервер на порту 5001, отдающий кадры оператору тем же
-    протоколом, что уже понимает video_client.cpp:
-    [4 байта размер, big-endian][JPEG-данные].
-
-    Отправка неблокирующая: если ПК-клиент не подключён или не
-    успевает вычитывать поток, мы просто пропускаем кадр, а не
-    зависаем — та же защита, что уже применена в labirinth_server.cpp
-    для телеметрии.
-    """
+    """Отдаёт JPEG-кадры подключённому оператору по TCP."""
 
     def __init__(self, port: int):
         self.port = port
@@ -189,6 +157,7 @@ class TcpFrameBroadcaster:
         while True:
             client_socket, address = self._server_socket.accept()
             client_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            client_socket.settimeout(1.0)
 
             logger.info("ПК подключён (видео): %s", address)
 
@@ -198,6 +167,7 @@ class TcpFrameBroadcaster:
                         self._client_socket.close()
                     except Exception:
                         pass
+
                 self._client_socket = client_socket
 
     def broadcast(self, jpeg_frame: bytes):
@@ -208,18 +178,16 @@ class TcpFrameBroadcaster:
             return
 
         try:
-            client.setblocking(False)
             header = struct.pack(">I", len(jpeg_frame))
             client.sendall(header + jpeg_frame)
-        except (BlockingIOError, ConnectionError, OSError):
-            # ПК не успевает читать, или отключился - пропускаем кадр,
-            # не блокируем мост. Следующий кадр придёт почти сразу.
+        except (socket.timeout, ConnectionError, OSError):
             self._drop_client(client)
 
     def _drop_client(self, dead_client: socket.socket):
         with self._lock:
             if self._client_socket is dead_client:
                 self._client_socket = None
+
         try:
             dead_client.close()
         except Exception:
@@ -227,13 +195,7 @@ class TcpFrameBroadcaster:
 
 
 class FrameRecorder:
-    """
-    Пишет видео на диск - задел под требование "чёрный ящик" из общих
-    требований проекта. Файлы ротируются по времени, чтобы не расти
-    бесконечно. Требует opencv-python; если он недоступен или запись
-    не нужна прямо сейчас, просто не создавайте этот объект (запись
-    полностью опциональна).
-    """
+    """Опциональная запись полученных JPEG-кадров в AVI."""
 
     def __init__(self, output_dir: str, segment_seconds: int = 600, fps: float = 20.0):
         self.output_dir = Path(output_dir)
@@ -258,7 +220,6 @@ class FrameRecorder:
             return
 
         height, width = image.shape[:2]
-
         self._rotate_segment_if_needed((width, height))
         self._writer.write(image)
 
@@ -299,12 +260,26 @@ def run(camera_ip: str, camera_port: int, tcp_port: int, recorder: Optional[Fram
     broadcaster = TcpFrameBroadcaster(tcp_port)
     broadcaster.start()
 
+    frame_counter = 0
+    last_log_time = time.monotonic()
+
     try:
         for frame in camera.frames():
             broadcaster.broadcast(frame)
 
             if recorder is not None:
                 recorder.record(frame)
+
+            frame_counter += 1
+
+            now = time.monotonic()
+            if now - last_log_time >= 5.0:
+                logger.info(
+                    "Видео работает: кадров=%d, последний JPEG=%d байт.",
+                    frame_counter,
+                    len(frame),
+                )
+                last_log_time = now
     finally:
         if recorder is not None:
             recorder.close()
@@ -312,17 +287,20 @@ def run(camera_ip: str, camera_port: int, tcp_port: int, recorder: Optional[Fram
 
 def main():
     parser = argparse.ArgumentParser(description="OmegaBot camera bridge")
-    parser.add_argument("--camera-ip", required=True, help="IP-адрес камеры в вашей сети")
+    parser.add_argument("--camera-ip", required=True, help="IP-адрес камеры")
     parser.add_argument("--camera-port", type=int, default=5557)
-    parser.add_argument("--tcp-port", type=int, default=5001, help="Порт для video_client.cpp")
-    parser.add_argument("--record-to", default=None, help="Папка для записи видео (опционально)")
+    parser.add_argument("--tcp-port", type=int, default=5001)
+    parser.add_argument("--record-to", default=None)
     parser.add_argument("--record-segment-seconds", type=int, default=600)
 
     args = parser.parse_args()
 
     recorder = None
     if args.record_to:
-        recorder = FrameRecorder(args.record_to, segment_seconds=args.record_segment_seconds)
+        recorder = FrameRecorder(
+            args.record_to,
+            segment_seconds=args.record_segment_seconds,
+        )
 
     run(args.camera_ip, args.camera_port, args.tcp_port, recorder)
 
