@@ -7,6 +7,7 @@
 #include <QFrame>
 #include <QPushButton>
 #include <QPixmap>
+#include <QStyle>
 
 namespace {
 QLabel* statusCard(const QString& title, QLabel*& value)
