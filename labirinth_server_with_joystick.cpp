@@ -20,7 +20,7 @@
 class NetworkSettings
 {
 public:
-    static constexpr const char* RASPBERRY_IP = "192.168.1.100";
+    static constexpr const char* RASPBERRY_IP = "10.109.150.232";
     static constexpr int SERVER_PORT = 5000;
 };
 
