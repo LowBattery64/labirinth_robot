@@ -1,18 +1,119 @@
 // ============================================================
-// OmegaBot — Raspberry Pi control server
+// OmegaBot — Raspberry Pi control server (плата ARP-DEK-STR-02)
+// ------------------------------------------------------------
+// В отличие от старой схемы (отдельный Arduino только слушал
+// команды), здесь плата робота сама шлёт назад строки телеметрии
+// (ИК/УЗ/энкодеры/объект камеры — см. str02/str02_controller.ino).
+// Поэтому обмен по Serial теперь двунаправленный: команды ПК -> плата
+// и телеметрия плата -> ПК, одновременно, без блокировки друг друга
+// (см. select() в RobotServer::processCommands).
+//
+// Протокол управления (ПК -> плата) не менялся: однобайтовые команды
+// F/B/L/R/S, как и раньше.
+//
+// ВНИМАНИЕ: путь /dev/ttyACM0 и скорость 115200 — то, что обычно
+// получается при подключении Mega-совместимой платы по USB, но это
+// стоит проверить на реальном Raspberry Pi (`ls /dev/tty*` до и после
+// подключения платы) и поправить SERIAL_PORT при необходимости.
 // ============================================================
 
 #include <iostream>
 #include <string>
 #include <cstring>
+#include <cerrno>
+#include <algorithm>
+#include <functional>
+#include <fstream>
+#include <chrono>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
 
 #include <unistd.h>
 #include <fcntl.h>
 #include <termios.h>
 
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+
+
+class RobotLogger
+{
+private:
+    std::ofstream eventLog;
+    std::ofstream telemetryLog;
+
+public:
+    bool initialize()
+    {
+        eventLog.open("robot.log", std::ios::app);
+        telemetryLog.open("telemetry.csv", std::ios::app);
+
+        if (!eventLog.is_open() || !telemetryLog.is_open())
+        {
+            return false;
+        }
+
+        if (telemetryLog.tellp() == std::streampos(0))
+        {
+            telemetryLog
+                << "timestamp,telemetry"
+                << std::endl;
+        }
+
+        writeEvent("Сервер запущен.");
+
+        return true;
+    }
+
+    void writeEvent(const std::string& message)
+    {
+        if (eventLog.is_open())
+        {
+            eventLog
+                << timestamp()
+                << " | "
+                << message
+                << std::endl;
+        }
+    }
+
+    void writeTelemetry(const std::string& telemetry)
+    {
+        if (telemetryLog.is_open())
+        {
+            telemetryLog
+                << timestamp()
+                << ",\""
+                << telemetry
+                << "\""
+                << std::endl;
+        }
+    }
+
+private:
+    std::string timestamp() const
+    {
+        const auto now = std::chrono::system_clock::now();
+        const std::time_t currentTime =
+            std::chrono::system_clock::to_time_t(now);
+
+        std::tm timeInfo{};
+
+#ifdef _WIN32
+        localtime_s(&timeInfo, &currentTime);
+#else
+        localtime_r(&currentTime, &timeInfo);
+#endif
+
+        std::ostringstream output;
+        output << std::put_time(&timeInfo, "%Y-%m-%d %H:%M:%S");
+
+        return output.str();
+    }
+};
 
 
 class SerialController
@@ -22,6 +123,7 @@ private:
     const speed_t baudRate;
 
     int serialFileDescriptor;
+    std::string lineBuffer;
 
 public:
     SerialController(
@@ -86,6 +188,11 @@ public:
         return true;
     }
 
+    int getFileDescriptor() const
+    {
+        return serialFileDescriptor;
+    }
+
     bool sendCommand(char command)
     {
         if (serialFileDescriptor < 0)
@@ -98,6 +205,56 @@ public:
             &command,
             1
         ) == 1;
+    }
+
+    // Вызывается, когда select() сказал, что на serialFileDescriptor
+    // есть данные. Читает всё, что накопилось, разбивает на строки
+    // (плата шлёт телеметрию, разделённую '\n') и отдаёт каждую
+    // полную строку через onLine. Неполный хвост остаётся в буфере
+    // до следующего вызова. Возвращает false при ошибке/обрыве связи.
+    bool pollLines(const std::function<void(const std::string&)>& onLine)
+    {
+        char chunk[256];
+
+        ssize_t bytesRead = read(
+            serialFileDescriptor,
+            chunk,
+            sizeof(chunk)
+        );
+
+        if (bytesRead < 0)
+        {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                return true;
+            }
+
+            perror("read (serial)");
+            return false;
+        }
+
+        if (bytesRead == 0)
+        {
+            // Плата отключилась (USB отвалился и т.п.)
+            return false;
+        }
+
+        for (ssize_t i = 0; i < bytesRead; i++)
+        {
+            char receivedChar = chunk[i];
+
+            if (receivedChar == '\n')
+            {
+                onLine(lineBuffer);
+                lineBuffer.clear();
+            }
+            else if (receivedChar != '\r')
+            {
+                lineBuffer += receivedChar;
+            }
+        }
+
+        return true;
     }
 
     void closeConnection()
@@ -249,6 +406,11 @@ public:
         return true;
     }
 
+    int getClientSocket() const
+    {
+        return clientSocket;
+    }
+
     ssize_t receiveData(
         char* buffer,
         size_t bufferSize
@@ -265,6 +427,36 @@ public:
             bufferSize,
             0
         );
+    }
+
+    // Отправка телеметрии от платы робота обратно оператору на ПК.
+    bool sendData(const char* data, size_t length)
+    {
+        if (clientSocket < 0)
+        {
+            return false;
+        }
+
+        size_t totalSent = 0;
+
+        while (totalSent < length)
+        {
+            ssize_t sent = send(
+                clientSocket,
+                data + totalSent,
+                length - totalSent,
+                MSG_NOSIGNAL
+            );
+
+            if (sent <= 0)
+            {
+                return false;
+            }
+
+            totalSent += static_cast<size_t>(sent);
+        }
+
+        return true;
     }
 
     void closeClient()
@@ -369,8 +561,9 @@ class RobotServer
 private:
     static constexpr int SERVER_PORT = 5000;
 
+    // См. предупреждение в шапке файла - проверить на реальном Pi.
     static constexpr const char* SERIAL_PORT =
-        "/dev/ttyACM0";
+        "/dev/ttyUSB0";
 
     static constexpr speed_t SERIAL_BAUD =
         B115200;
@@ -383,6 +576,7 @@ private:
     SerialController serialController;
 
     CommandController commandController;
+    RobotLogger logger;
 
 public:
     RobotServer()
@@ -397,11 +591,19 @@ public:
     int run()
     {
         std::cout
-            << "OmegaBot Raspberry Pi Server\n"
+            << "OmegaBot Raspberry Pi Server (ARP-DEK-STR-02)\n"
             << std::endl;
 
         if (!initialize())
         {
+            return 1;
+        }
+
+        if (!logger.initialize())
+        {
+            std::cerr
+                << "Не удалось открыть файлы журналов."
+                << std::endl;
             return 1;
         }
 
@@ -438,30 +640,67 @@ private:
         return networkController.waitForClient();
     }
 
+    // Одновременно слушаем ПК (TCP) и плату робота (Serial) через
+    // select() - ни одно направление не блокирует другое.
     void processCommands()
     {
-        char commandBuffer[
-            COMMAND_BUFFER_SIZE
-        ];
+        char commandBuffer[COMMAND_BUFFER_SIZE];
+
+        int clientFd = networkController.getClientSocket();
+        int serialFd = serialController.getFileDescriptor();
+        int maxFd = std::max(clientFd, serialFd);
 
         while (true)
         {
-            ssize_t bytesReceived =
-                networkController.receiveData(
+            fd_set readFds;
+            FD_ZERO(&readFds);
+            FD_SET(clientFd, &readFds);
+            FD_SET(serialFd, &readFds);
+
+            int ready = select(maxFd + 1, &readFds, nullptr, nullptr, nullptr);
+
+            if (ready < 0)
+            {
+                perror("select");
+                break;
+            }
+
+            if (FD_ISSET(clientFd, &readFds))
+            {
+                ssize_t bytesReceived = networkController.receiveData(
                     commandBuffer,
                     COMMAND_BUFFER_SIZE
                 );
 
-            if (bytesReceived <= 0)
-            {
-                handleClientDisconnect();
-                break;
+                if (bytesReceived <= 0)
+                {
+                    handleClientDisconnect();
+                    break;
+                }
+
+                processReceivedCommands(
+                    commandBuffer,
+                    bytesReceived
+                );
             }
 
-            processReceivedCommands(
-                commandBuffer,
-                bytesReceived
-            );
+            if (FD_ISSET(serialFd, &readFds))
+            {
+                bool serialOk = serialController.pollLines(
+                    [this](const std::string& line)
+                    {
+                        relayTelemetry(line);
+                    }
+                );
+
+                if (!serialOk)
+                {
+                    std::cerr
+                        << "Связь с платой робота потеряна (Serial)."
+                        << std::endl;
+                    break;
+                }
+            }
         }
     }
 
@@ -504,13 +743,33 @@ private:
                 << "Команда: "
                 << command
                 << std::endl;
+
+            logger.writeEvent(
+                std::string("Команда: ") + command
+            );
         }
         else
         {
             std::cerr
-                << "Не удалось отправить команду Arduino."
+                << "Не удалось отправить команду плате робота."
                 << std::endl;
         }
+    }
+
+    // Строка телеметрии (ИК/УЗ/энкодеры/камера) от платы робота —
+    // логируем на Pi и пересылаем оператору на ПК тем же TCP-соединением.
+    void relayTelemetry(const std::string& line)
+    {
+        std::cout << "Телеметрия: " << line << std::endl;
+
+        logger.writeTelemetry(line);
+
+        std::string withNewline = line + "\n";
+
+        networkController.sendData(
+            withNewline.c_str(),
+            withNewline.size()
+        );
     }
 
     void handleClientDisconnect()
@@ -518,12 +777,16 @@ private:
         std::cout
             << "PC отключён."
             << std::endl;
+
+        logger.writeEvent("PC отключён.");
     }
 
     void stopRobot()
     {
         // Безопасное состояние при любом завершении TCP-сессии.
         serialController.sendCommand('S');
+
+        logger.writeEvent("Робот остановлен.");
     }
 };
 
