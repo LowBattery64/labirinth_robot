@@ -264,8 +264,8 @@ char readKey()
 int main(int argc, char* argv[])
 {
     // IP Raspberry Pi можно передать аргументом:
-    //   labirinth_client.exe 10.122.144.232
-    std::string serverIp = "10.122.144.232";
+    //   labirinth_client.exe 10.109.150.232
+    std::string serverIp = "10.109.150.232";
 
     if (argc > 1)
     {
