@@ -1,21 +1,94 @@
-# OmegaBot Operator Console
+# OmegaBot — телеуправление и видеосвязь
 
-Qt 6 desktop interface for the OmegaBot operator.
+Документация по текущей версии проекта. Здесь описаны физическая схема, порядок запуска, назначение файлов, датчики, логи и задачи для дальнейшей разработки.
 
-Current behavior:
-- Live video from Raspberry Pi TCP port 5001.
-- Robot control and telemetry from TCP port 5000.
-- W/A/S/D and arrow keys send persistent commands.
-- Releasing a key does not stop the robot.
-- S, Space and STOP send the stop command.
-- Ultrasonic safety state is shown compactly.
-- Detailed telemetry is not displayed on the main screen.
-- Operator log is available on demand.
+## 1. Схема
 
-Build with Qt 6 Widgets and Network:
-cmake -S . -B build
-cmake --build build --config Release
+~~~text
+ПК оператора
+  │
+  ├── TCP 5000 ──► Raspberry Pi 3B ── USB Serial 115200 ──► ARP-DEK-STR-02 ──► моторы
+  │
+  └── TCP 5001 ◄── camera_bridge.py ◄── WebSocket 5557 ◄── TrackingCam3
+~~~
 
-Raspberry Pi: 10.109.150.232
-Control/telemetry: TCP 5000
-Video: TCP 5001
+Текущие адреса:
+
+| Устройство | Адрес |
+|---|---|
+| Raspberry Pi 3B | 10.109.150.232 |
+| TrackingCam3 | 10.109.150.34 |
+| ПК оператора | 10.109.150.107 |
+
+Порты:
+
+- Raspberry Pi TCP 5000 — управление и телеметрия.
+- Raspberry Pi TCP 5001 — видео.
+- TrackingCam3 WebSocket 5557 — исходный видеопоток.
+
+## 2. Назначение файлов
+
+### str02-controller.ino
+
+Прошивка ARP-DEK-STR-02.
+
+Реализованы:
+
+- два приводных мотора;
+- команды F/B/L/R/S;
+- передний ИК-датчик;
+- три ультразвуковых дальномера;
+- два энкодера;
+- телеметрия каждые 200 мс;
+- watchdog 500 мс;
+- блокировка движения вперед при препятствии на расстоянии 25 см или меньше.
+
+TrackingCam в коде нижнего уровня присутствует, но ее опрос сейчас временно отключен.
+
+### labirinth_server.cpp
+
+Сервер Raspberry Pi:
+
+- TCP 5000;
+- принимает команды от ПК;
+- передает команды по USB Serial;
+- принимает телеметрию от платы;
+- отправляет телеметрию обратно ПК;
+- пишет robot.log и telemetry.csv.
+
+Текущий Serial-порт:
+
+~~~text
+/dev/ttyUSB0
+~~~
+
+Скорость:
+
+~~~text
+115200
+~~~
+
+### camera_bridge.py
+
+Видеомост Raspberry Pi:
+
+~~~text
+TrackingCam3 → WebSocket 5557 → camera_bridge.py → TCP 5001 → ПК
+~~~
+
+Также умеет записывать видео при указании --record-to.
+
+### operator_ui/
+
+Qt 6 приложение оператора.
+
+Поддерживает:
+
+- видео;
+- управление W/A/S/D и стрелками;
+- STOP / Space;
+- телеметрию;
+- индикацию соединения;
+- отображение FPS;
+- локальный журнал действий оператора.
+
