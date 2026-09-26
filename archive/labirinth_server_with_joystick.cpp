@@ -13,10 +13,6 @@
 #pragma comment(lib, "Xinput.lib")
 
 
-// ============================================================
-// Настройки подключения
-// ============================================================
-
 class NetworkSettings
 {
 public:
@@ -24,10 +20,6 @@ public:
     static constexpr int SERVER_PORT = 5000;
 };
 
-
-// ============================================================
-// TCP-соединение с Raspberry Pi
-// ============================================================
 
 class NetworkController
 {
@@ -120,7 +112,8 @@ public:
                 return;
             }
 
-            if (receivedCharacter == '\n')
+            if (receivedCharacter == '
+')
             {
                 if (!line.empty())
                 {
@@ -132,7 +125,7 @@ public:
                     line.clear();
                 }
             }
-            else if (receivedCharacter != '\r')
+            else if (receivedCharacter != '')
             {
                 line += receivedCharacter;
             }
@@ -154,10 +147,6 @@ public:
     }
 };
 
-
-// ============================================================
-// Управление USB-геймпадом через XInput
-// ============================================================
 
 class GamepadController
 {
@@ -229,10 +218,6 @@ public:
 };
 
 
-// ============================================================
-// Основной контроллер оператора
-// ============================================================
-
 class RobotController
 {
 private:
@@ -301,7 +286,8 @@ private:
         )
         {
             std::cout
-                << "Ошибка инициализации Winsock.\n";
+                << "Ошибка инициализации Winsock.
+";
 
             return false;
         }
@@ -309,7 +295,8 @@ private:
         if (!networkController.connectToServer())
         {
             std::cout
-                << "Не удалось подключиться к Raspberry Pi.\n";
+                << "Не удалось подключиться к Raspberry Pi.
+";
 
             WSACleanup();
 
@@ -317,7 +304,8 @@ private:
         }
 
         std::cout
-            << "Подключение к Raspberry Pi установлено.\n";
+            << "Подключение к Raspberry Pi установлено.
+";
 
         return true;
     }
@@ -325,14 +313,16 @@ private:
     bool waitForGamepad()
     {
         std::cout
-            << "Ожидание USB-геймпада...\n";
+            << "Ожидание USB-геймпада...
+";
 
         while (running)
         {
             if (gamepadController.isConnected())
             {
                 std::cout
-                    << "Геймпад подключён.\n";
+                    << "Геймпад подключён.
+";
 
                 return true;
             }
@@ -348,10 +338,16 @@ private:
     void controlRobot()
     {
         std::cout
-            << "\nУправление:\n"
-            << "Левый стик — движение\n"
-            << "A — стоп\n"
-            << "Start — выход\n\n";
+            << "
+Управление:
+"
+            << "Левый стик — движение
+"
+            << "A — стоп
+"
+            << "Start — выход
+
+";
 
         while (running)
         {
@@ -360,7 +356,8 @@ private:
                 stopRobot();
 
                 std::cout
-                    << "Геймпад отключён.\n";
+                    << "Геймпад отключён.
+";
 
                 break;
             }
@@ -409,32 +406,33 @@ private:
         switch (command)
         {
             case 'F':
-                std::cout << "Вперёд\n";
+                std::cout << "Вперёд
+";
                 break;
 
             case 'B':
-                std::cout << "Назад\n";
+                std::cout << "Назад
+";
                 break;
 
             case 'L':
-                std::cout << "Влево\n";
+                std::cout << "Влево
+";
                 break;
 
             case 'R':
-                std::cout << "Вправо\n";
+                std::cout << "Вправо
+";
                 break;
 
             case 'S':
-                std::cout << "Стоп\n";
+                std::cout << "Стоп
+";
                 break;
         }
     }
 };
 
-
-// ============================================================
-// Точка входа
-// ============================================================
 
 int main()
 {

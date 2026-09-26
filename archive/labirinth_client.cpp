@@ -77,9 +77,9 @@ public:
         {
             telemetryLog
                 << timestamp()
-                << ",\""
+                << ",""
                 << telemetry
-                << "\""
+                << """
                 << std::endl;
         }
     }
@@ -189,7 +189,8 @@ public:
                 return false;
             }
 
-            if (receivedCharacter == '\n')
+            if (receivedCharacter == '
+')
             {
                 if (!line.empty())
                 {
@@ -203,7 +204,7 @@ public:
                     line.clear();
                 }
             }
-            else if (receivedCharacter != '\r')
+            else if (receivedCharacter != '')
             {
                 line += receivedCharacter;
             }
@@ -293,13 +294,21 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    std::cout << "\nУправление:\n"
-              << "  W или F — вперёд\n"
-              << "  S или B — назад\n"
-              << "  A или L — влево\n"
-              << "  D или R — вправо\n"
-              << "  Пробел  — стоп\n"
-              << "  Q       — выход\n"
+    std::cout << "
+Управление:
+"
+              << "  W или F — вперёд
+"
+              << "  S или B — назад
+"
+              << "  A или L — влево
+"
+              << "  D или R — вправо
+"
+              << "  Пробел  — стоп
+"
+              << "  Q       — выход
+"
               << std::endl;
 
     ClientLogger logger;

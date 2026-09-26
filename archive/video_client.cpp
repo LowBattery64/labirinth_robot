@@ -32,10 +32,6 @@
 #include <opencv2/highgui.hpp>
 
 
-// ============================================================
-// TCP-соединение с видео-сервером на Raspberry Pi
-// ============================================================
-
 class VideoTcpClient
 {
 private:
@@ -152,10 +148,6 @@ public:
 };
 
 
-// ============================================================
-// Отображение видео
-// ============================================================
-
 class VideoDisplay
 {
 private:
@@ -218,7 +210,9 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    std::cout << "\nОкно видео открыто. Q или Esc — выход.\n" << std::endl;
+    std::cout << "
+Окно видео открыто. Q или Esc — выход.
+" << std::endl;
 
     VideoDisplay display;
     std::vector<uchar> jpegBuffer;
