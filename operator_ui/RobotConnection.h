@@ -1,7 +1,9 @@
 #pragma once
+
 #include <QObject>
 #include <QTcpSocket>
 #include <QTimer>
+
 #include "Telemetry.h"
 
 class RobotConnection : public QObject
@@ -19,6 +21,10 @@ public:
 signals:
     void connectionChanged(bool connected);
     void telemetryUpdated(const Telemetry& telemetry);
+    void serverEventReceived(
+        const QString& serverTimestamp,
+        const QString& message
+    );
     void errorOccurred(const QString& message);
 
 private slots:
