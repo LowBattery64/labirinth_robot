@@ -2,6 +2,7 @@
 
 #include <QString>
 #include <QStringList>
+#include <QSet>
 
 #include "Telemetry.h"
 
@@ -27,4 +28,8 @@ private:
     QString localTimestamp() const;
     void appendLine(const QString& filePath, const QString& line);
     static QString csvEscape(const QString& value);
+    void loadKnownEntries();
+
+    QSet<QString> loggedServerEvents;
+    QSet<QString> loggedTelemetryTimestamps;
 };
