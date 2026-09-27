@@ -6,6 +6,9 @@ OmegaBot — мост между TrackingCam3 и оператором.
     ws://<camera-ip>:5557
     subprotocol: pub.sp.nanomsg.org
 
+Для подключения к TrackingCam3 используется HTTP Origin:
+    http://<camera-ip>
+
 Формат проверенного сообщения с видеокадром:
     32 байта служебного заголовка
     JPEG 640x480
@@ -62,6 +65,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
+
 logger = logging.getLogger("camera_bridge")
 
 
@@ -98,7 +102,12 @@ class NanomsgCameraClient:
 
     PROTOCOL = "pub.sp.nanomsg.org"
 
-    def __init__(self, camera_ip: str, camera_port: int, reconnect_delay_s: float = 2.0):
+    def __init__(
+        self,
+        camera_ip: str,
+        camera_port: int,
+        reconnect_delay_s: float = 2.0,
+    ):
         self.camera_ip = camera_ip
         self.camera_port = camera_port
         self.reconnect_delay_s = reconnect_delay_s
@@ -109,21 +118,34 @@ class NanomsgCameraClient:
             try:
                 self._connect()
                 yield from self._receive_loop()
+
             except Exception as error:
-                logger.warning("Соединение с камерой потеряно: %s", error)
+                logger.warning(
+                    "Соединение с камерой потеряно: %s",
+                    error,
+                )
+
             finally:
                 self._disconnect()
 
-            logger.info("Переподключение через %.1f с...", self.reconnect_delay_s)
+            logger.info(
+                "Переподключение через %.1f с...",
+                self.reconnect_delay_s,
+            )
+
             time.sleep(self.reconnect_delay_s)
 
     def _connect(self):
         url = f"ws://{self.camera_ip}:{self.camera_port}"
+        origin = f"http://{self.camera_ip}"
+
         logger.info("Подключение к камере: %s", url)
+        logger.info("Origin: %s", origin)
 
         self._socket = websocket.create_connection(
             url,
             subprotocols=[self.PROTOCOL],
+            origin=origin,
             timeout=5,
         )
 
@@ -135,6 +157,7 @@ class NanomsgCameraClient:
                 self._socket.close()
             except Exception:
                 pass
+
             self._socket = None
 
     def _receive_loop(self):
@@ -144,7 +167,9 @@ class NanomsgCameraClient:
             data = self._socket.recv()
 
             if data is None:
-                raise ConnectionError("Камера закрыла соединение.")
+                raise ConnectionError(
+                    "Камера закрыла соединение."
+                )
 
             if not isinstance(data, (bytes, bytearray)):
                 continue
@@ -167,14 +192,33 @@ class TcpFrameBroadcaster:
         self._lock = threading.Lock()
 
     def start(self):
-        self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._server_socket.bind(("0.0.0.0", self.port))
+        self._server_socket = socket.socket(
+            socket.AF_INET,
+            socket.SOCK_STREAM,
+        )
+
+        self._server_socket.setsockopt(
+            socket.SOL_SOCKET,
+            socket.SO_REUSEADDR,
+            1,
+        )
+
+        self._server_socket.bind(
+            ("0.0.0.0", self.port)
+        )
+
         self._server_socket.listen(1)
 
-        logger.info("Видео-сервер для оператора запущен на порту %d.", self.port)
+        logger.info(
+            "Видео-сервер для оператора запущен на порту %d.",
+            self.port,
+        )
 
-        thread = threading.Thread(target=self._accept_loop, daemon=True)
+        thread = threading.Thread(
+            target=self._accept_loop,
+            daemon=True,
+        )
+
         thread.start()
 
     def _accept_loop(self):
@@ -182,10 +226,19 @@ class TcpFrameBroadcaster:
 
         while True:
             client_socket, address = self._server_socket.accept()
-            client_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
+            client_socket.setsockopt(
+                socket.IPPROTO_TCP,
+                socket.TCP_NODELAY,
+                1,
+            )
+
             client_socket.settimeout(1.0)
 
-            logger.info("ПК подключён (видео): %s", address)
+            logger.info(
+                "ПК подключён (видео): %s",
+                address,
+            )
 
             with self._lock:
                 if self._client_socket is not None:
@@ -209,10 +262,27 @@ class TcpFrameBroadcaster:
             client.sendall(header + jpeg_frame)
             return True
         except (socket.timeout, ConnectionError, OSError):
+            header = struct.pack(
+                ">I",
+                len(jpeg_frame),
+            )
+
+            client.sendall(
+                header + jpeg_frame
+            )
+
+        except (
+            socket.timeout,
+            ConnectionError,
+            OSError,
+        ):
             self._drop_client(client)
             return False
 
-    def _drop_client(self, dead_client: socket.socket):
+    def _drop_client(
+        self,
+        dead_client: socket.socket,
+    ):
         with self._lock:
             if self._client_socket is dead_client:
                 self._client_socket = None
@@ -239,9 +309,18 @@ class ThreadedFrameRecorder:
 
     QUEUE_CAPACITY = 4
 
-    def __init__(self, output_dir: str, segment_seconds: int = 600, fps: float = 20.0):
+    def __init__(
+        self,
+        output_dir: str,
+        segment_seconds: int = 600,
+        fps: float = 20.0,
+    ):
         self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.output_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
         self.segment_seconds = segment_seconds
         self.fps = fps
 
