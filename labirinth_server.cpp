@@ -51,6 +51,7 @@
 #include <ctime>
 #include <iomanip>
 #include <sstream>
+#include <deque>
 
 #include <unistd.h>
 #include <fcntl.h>
@@ -616,6 +617,9 @@ private:
     CommandController commandController;
     RobotLogger logger;
 
+    static constexpr size_t TELEMETRY_HISTORY_SIZE = 1000;
+    std::deque<std::string> telemetryHistory;
+
 public:
     RobotServer()
         : networkController(SERVER_PORT),
@@ -765,6 +769,33 @@ private:
             << std::endl;
 
         logger.writeEvent("PC подключён: " + fromAddress);
+
+        replayTelemetryHistory();
+    }
+
+    void replayTelemetryHistory()
+    {
+        if (!networkController.hasClient() || telemetryHistory.empty())
+            return;
+
+        std::cout
+            << "Передача накопленной телеметрии: "
+            << telemetryHistory.size()
+            << " строк."
+            << std::endl;
+
+        for (const std::string& line : telemetryHistory)
+        {
+            std::string withNewline = line + "\n";
+
+            if (!networkController.sendData(
+                    withNewline.c_str(),
+                    withNewline.size()))
+            {
+                networkController.closeClient();
+                return;
+            }
+        }
     }
 
     // Возвращает false, если клиент отключился (0 байт/ошибка) -
@@ -850,6 +881,10 @@ private:
         std::cout << "Телеметрия: " << line << std::endl;
 
         logger.writeTelemetry(line);
+
+        telemetryHistory.push_back(line);
+        if (telemetryHistory.size() > TELEMETRY_HISTORY_SIZE)
+            telemetryHistory.pop_front();
 
         std::string withNewline = line + "\n";
 
