@@ -7,6 +7,7 @@
 #include <QKeyEvent>
 #include "RobotConnection.h"
 #include "VideoConnection.h"
+#include "OperatorLogger.h"
 
 class MainWindow : public QMainWindow
 {
@@ -23,6 +24,8 @@ private:
     void setCommand(QChar command);
     void updateTelemetry(const Telemetry& telemetry);
     void appendLog(const QString& message);
+    void appendServerLog(const QString& serverTimestamp, const QString& message);
+    void appendLogLine(const QString& line);
 
     QLabel* videoLabel = nullptr;
     QLabel* robotStatus = nullptr;
@@ -37,4 +40,6 @@ private:
     QTextEdit* logView = nullptr;
     RobotConnection robot;
     VideoConnection video;
+    OperatorLogger logger;
+    bool watchdogActive = false;
 };
