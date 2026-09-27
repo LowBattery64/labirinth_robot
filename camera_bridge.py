@@ -497,6 +497,227 @@ class ThreadedFrameRecorder:
         logger.info("Новый файл записи: %s", output_path)
 
 
+
+class StreamProcessor:
+    """Применяет выбранный оператором профиль качества к JPEG-потоку."""
+
+    PROFILES = {
+        "HIGH": (1.0, 85),
+        "MEDIUM": (0.75, 70),
+        "LOW": (0.5, 55),
+    }
+
+    def __init__(self):
+        self._quality = "HIGH"
+        self._lock = threading.Lock()
+
+    def set_quality(self, quality: str) -> bool:
+        quality = quality.upper()
+        if quality not in self.PROFILES:
+            return False
+
+        with self._lock:
+            self._quality = quality
+        logger.info("Качество видеопотока: %s", quality)
+        return True
+
+    def get_quality(self) -> str:
+        with self._lock:
+            return self._quality
+
+    def process(self, jpeg_frame: bytes) -> bytes:
+        with self._lock:
+            quality = self._quality
+
+        if quality == "HIGH":
+            return jpeg_frame
+
+        import cv2
+        import numpy as np
+
+        image = cv2.imdecode(
+            np.frombuffer(jpeg_frame, dtype=np.uint8),
+            cv2.IMREAD_COLOR,
+        )
+
+        if image is None:
+            return jpeg_frame
+
+        scale, jpeg_quality = self.PROFILES[quality]
+        if scale != 1.0:
+            image = cv2.resize(
+                image,
+                None,
+                fx=scale,
+                fy=scale,
+                interpolation=cv2.INTER_AREA,
+            )
+
+        success, encoded = cv2.imencode(
+            ".jpg",
+            image,
+            [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality],
+        )
+
+        if not success:
+            return jpeg_frame
+
+        return encoded.tobytes()
+
+
+class VideoControlServer:
+    """TCP-канал команд от операторского интерфейса."""
+
+    def __init__(self, port: int, controller):
+        self.port = port
+        self.controller = controller
+        self._server_socket: Optional[socket.socket] = None
+
+    def start(self):
+        self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._server_socket.bind(("0.0.0.0", self.port))
+        self._server_socket.listen(4)
+
+        logger.info("Канал управления видео запущен на порту %d.", self.port)
+        threading.Thread(target=self._accept_loop, daemon=True).start()
+
+    def _accept_loop(self):
+        assert self._server_socket is not None
+
+        while True:
+            client_socket, address = self._server_socket.accept()
+            client_socket.settimeout(None)
+            logger.info("ПК подключён (управление видео): %s", address)
+            threading.Thread(
+                target=self._client_loop,
+                args=(client_socket,),
+                daemon=True,
+            ).start()
+
+    def _client_loop(self, client_socket: socket.socket):
+        try:
+            client_socket.sendall(
+                f"QUALITY {self.controller.get_quality()}\\n".encode()
+            )
+            client_socket.sendall(
+                f"RECORD {'ON' if self.controller.is_recording() else 'OFF'}\\n".encode()
+            )
+
+            buffer = b""
+            while True:
+                data = client_socket.recv(4096)
+                if not data:
+                    return
+
+                buffer += data
+
+                while b"\\n" in buffer:
+                    line, buffer = buffer.split(b"\\n", 1)
+                    response = self._handle_command(line.decode("utf-8", errors="replace").strip())
+                    if response:
+                        client_socket.sendall((response + "\\n").encode())
+        except (ConnectionError, OSError):
+            pass
+        finally:
+            try:
+                client_socket.close()
+            except OSError:
+                pass
+
+    def _handle_command(self, command: str) -> str:
+        parts = command.upper().split()
+
+        if parts == ["STATUS"]:
+            return (
+                f"QUALITY {self.controller.get_quality()}\\n"
+                f"RECORD {'ON' if self.controller.is_recording() else 'OFF'}"
+            )
+
+        if len(parts) == 2 and parts[0] == "QUALITY":
+            if self.controller.set_quality(parts[1]):
+                return f"QUALITY {parts[1]}"
+            return "ERROR Неизвестный профиль качества"
+
+        if len(parts) == 2 and parts[0] == "RECORD":
+            if parts[1] == "START":
+                try:
+                    self.controller.start_recording()
+                    return "RECORD ON"
+                except Exception as error:
+                    return f"ERROR Не удалось начать запись: {error}"
+
+            if parts[1] == "STOP":
+                self.controller.stop_recording()
+                return "RECORD OFF"
+
+        return "ERROR Неизвестная команда"
+
+
+class VideoController:
+    """Общее состояние видеопотока, качества и записи."""
+
+    def __init__(
+        self,
+        record_dir: Optional[str],
+        segment_seconds: int,
+        fps: float = 20.0,
+    ):
+        self.stream_processor = StreamProcessor()
+        self.record_dir = Path(record_dir) if record_dir else None
+        self.segment_seconds = segment_seconds
+        self.fps = fps
+        self._recorder: Optional[ThreadedFrameRecorder] = None
+        self._recorder_lock = threading.Lock()
+
+    def set_quality(self, quality: str) -> bool:
+        return self.stream_processor.set_quality(quality)
+
+    def get_quality(self) -> str:
+        return self.stream_processor.get_quality()
+
+    def is_recording(self) -> bool:
+        with self._recorder_lock:
+            return self._recorder is not None
+
+    def start_recording(self):
+        if self.record_dir is None:
+            raise RuntimeError("Папка записи не задана")
+
+        self.record_dir.mkdir(parents=True, exist_ok=True)
+
+        with self._recorder_lock:
+            if self._recorder is not None:
+                return
+            self._recorder = ThreadedFrameRecorder(
+                str(self.record_dir),
+                segment_seconds=self.segment_seconds,
+                fps=self.fps,
+            )
+
+        logger.info("Запись видео запущена: %s", self.record_dir)
+
+    def stop_recording(self):
+        with self._recorder_lock:
+            recorder = self._recorder
+            self._recorder = None
+
+        if recorder is not None:
+            recorder.close()
+            logger.info("Запись видео остановлена.")
+
+    def process(self, jpeg_frame: bytes) -> bytes:
+        processed_frame = self.stream_processor.process(jpeg_frame)
+
+        with self._recorder_lock:
+            recorder = self._recorder
+
+        if recorder is not None:
+            recorder.put_frame(processed_frame)
+
+        return processed_frame
+
+
 class FpsCounter:
     """Считает частоту событий в скользящем окне ~report_period_s."""
 
@@ -523,10 +744,14 @@ class FpsCounter:
 def run(
     camera,
     tcp_port: int,
-    recorder: Optional[ThreadedFrameRecorder],
+    video_control_port: int,
+    controller: VideoController,
 ):
     broadcaster = TcpFrameBroadcaster(tcp_port)
     broadcaster.start()
+
+    control_server = VideoControlServer(video_control_port, controller)
+    control_server.start()
 
     incoming_fps_counter = FpsCounter()
     broadcast_fps_counter = FpsCounter()
@@ -540,38 +765,31 @@ def run(
 
             incoming_fps = incoming_fps_counter.tick()
 
-            sent = broadcaster.broadcast(frame)
+            processed_frame = controller.process(frame)
+
+            sent = broadcaster.broadcast(processed_frame)
             if sent:
                 broadcast_fps_counter.tick()
 
-            if recorder is not None:
-                recorder.put_frame(frame)
-
             if incoming_fps is not None:
-                rec_stats = recorder.stats() if recorder is not None else None
                 logger.info(
-                    "Кадров всего=%d, последний JPEG=%d байт, "
-                    "FPS от камеры=%.1f%s",
+                    "Кадров всего=%d, входной JPEG=%d байт, "
+                    "выходной JPEG=%d байт, FPS от камеры=%.1f, "
+                    "качество=%s, запись=%s",
                     total_frames,
                     last_frame_size,
+                    len(processed_frame),
                     incoming_fps,
-                    (
-                        f", запись: записано={rec_stats['written']} "
-                        f"отброшено={rec_stats['dropped']} "
-                        f"в очереди={rec_stats['queued']}"
-                        if rec_stats is not None
-                        else ""
-                    ),
+                    controller.get_quality(),
+                    "ON" if controller.is_recording() else "OFF",
                 )
-    finally:
-        if recorder is not None:
-            recorder.close()
 
 
 def main():
     parser = argparse.ArgumentParser(description="OmegaBot camera bridge")
     parser.add_argument("--camera-ip", required=True, help="IP-адрес камеры")
     parser.add_argument("--tcp-port", type=int, default=5001)
+    parser.add_argument("--control-port", type=int, default=5002)
     parser.add_argument("--record-to", default=None)
     parser.add_argument("--record-segment-seconds", type=int, default=600)
 
@@ -599,12 +817,10 @@ def main():
 
     args = parser.parse_args()
 
-    recorder = None
-    if args.record_to:
-        recorder = ThreadedFrameRecorder(
-            args.record_to,
-            segment_seconds=args.record_segment_seconds,
-        )
+    controller = VideoController(
+        args.record_to,
+        segment_seconds=args.record_segment_seconds,
+    )
 
     if args.transport == "motorcortex":
         camera = MotorcortexCameraClient(
@@ -618,7 +834,7 @@ def main():
     else:
         camera = NanomsgCameraClient(args.camera_ip, args.camera_port)
 
-    run(camera, args.tcp_port, recorder)
+    run(camera, args.tcp_port, args.control_port, controller)
 
 
 if __name__ == "__main__":
