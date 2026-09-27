@@ -12,8 +12,20 @@ stop_process() {
     pid="$(cat "$pid_file")"
     if kill -0 "$pid" 2>/dev/null; then
         kill "$pid"
-        sleep 1
-        if kill -0 "$pid" 2>/dev/null; then kill -9 "$pid"; fi
+
+        for _ in {1..10}; do
+            if ! kill -0 "$pid" 2>/dev/null; then
+                break
+            fi
+            sleep 0.5
+        done
+
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "$name: не завершился после SIGTERM, принудительное завершение."
+            kill -9 "$pid"
+            sleep 0.5
+        fi
+
         echo "$name: остановлен."
     else
         echo "$name: процесс уже завершён."
