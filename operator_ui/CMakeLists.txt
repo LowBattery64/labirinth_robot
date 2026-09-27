@@ -16,6 +16,8 @@ add_executable(OmegaBotOperator
     VideoConnection.h
     VideoConnection.cpp
     Telemetry.h
+    OperatorLogger.h
+    OperatorLogger.cpp
 )
 
 target_link_libraries(OmegaBotOperator PRIVATE Qt6::Widgets Qt6::Network)
