@@ -15,10 +15,10 @@ CAMERA_PID_FILE="$REPO_DIR/.camera_bridge.pid"
 CAMERA_IP="${CAMERA_IP:-10.109.150.34}"
 CAMERA_PORT="${CAMERA_PORT:-5557}"
 VIDEO_PORT="${VIDEO_PORT:-5001}"
+VIDEO_CONTROL_PORT="${VIDEO_CONTROL_PORT:-5002}"
 
 SERIAL_DEVICE="${SERIAL_DEVICE:-/dev/ttyUSB0}"
 
-RECORD_VIDEO="${RECORD_VIDEO:-1}"
 RECORD_DIR="${RECORD_DIR:-/media/raspberry/76E8-CACF/omegabot_recordings}"
 
 
@@ -60,24 +60,10 @@ fi
 echo "       Arduino: $SERIAL_DEVICE"
 
 
-echo "[3/5] Подготовка видеозаписи..."
+echo "[3/5] Подготовка видеоканала..."
 
-if [[ "$RECORD_VIDEO" == "1" ]]; then
-    RECORD_MOUNT="$(dirname "$RECORD_DIR")"
-
-    if ! mountpoint -q "$RECORD_MOUNT"; then
-        echo "[ERROR] USB-накопитель не смонтирован: $RECORD_MOUNT"
-        echo "        Для запуска без записи используй:"
-        echo "        RECORD_VIDEO=0 ./scripts/start_robot.sh"
-        exit 1
-    fi
-
-    mkdir -p "$RECORD_DIR"
-
-    echo "       Запись: $RECORD_DIR"
-else
-    echo "       Запись видео отключена."
-fi
+echo "       Запись запускается кнопкой оператора."
+echo "       Каталог записи: $RECORD_DIR"
 
 
 echo "[4/5] Компиляция и запуск labirinth_server..."
@@ -108,20 +94,13 @@ fi
 
 echo "[5/5] Запуск camera_bridge..."
 
-if [[ "$RECORD_VIDEO" == "1" ]]; then
-    CAMERA_ARGS=(
-        --camera-ip "$CAMERA_IP"
-        --camera-port "$CAMERA_PORT"
-        --tcp-port "$VIDEO_PORT"
-        --record-to "$RECORD_DIR"
-    )
-else
-    CAMERA_ARGS=(
-        --camera-ip "$CAMERA_IP"
-        --camera-port "$CAMERA_PORT"
-        --tcp-port "$VIDEO_PORT"
-    )
-fi
+CAMERA_ARGS=(
+    --camera-ip "$CAMERA_IP"
+    --camera-port "$CAMERA_PORT"
+    --tcp-port "$VIDEO_PORT"
+    --control-port "$VIDEO_CONTROL_PORT"
+    --record-to "$RECORD_DIR"
+)
 
 
 if is_running "$CAMERA_PID_FILE"; then
@@ -154,13 +133,9 @@ echo "========================================"
 echo " Raspberry: 10.109.150.232"
 echo " Control:   TCP 5000"
 echo " Video:     TCP $VIDEO_PORT"
+echo " Video ctl: TCP $VIDEO_CONTROL_PORT"
 echo " Camera:    $CAMERA_IP:$CAMERA_PORT"
 echo " Serial:    $SERIAL_DEVICE"
-
-if [[ "$RECORD_VIDEO" == "1" ]]; then
-    echo " Record:    $RECORD_DIR"
-else
-    echo " Record:    отключена"
-fi
+echo " Record:    по кнопке оператора -> $RECORD_DIR"
 
 echo "========================================"
