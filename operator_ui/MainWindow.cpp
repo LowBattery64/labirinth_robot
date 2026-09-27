@@ -320,6 +320,7 @@ void MainWindow::setupConnections()
         recordingStatus->setObjectName(recording ? "recordOn" : "recordOff");
         recordingStatus->style()->unpolish(recordingStatus);
         recordingStatus->style()->polish(recordingStatus);
+        appendLog(recording ? "Запись видео начата" : "Запись видео остановлена");
     });
 
     connect(&video, &VideoConnection::controlError, this, [this](const QString& message) {
