@@ -1,10 +1,13 @@
 #pragma once
+
 #include <QString>
 #include <QStringList>
 
 struct Telemetry
 {
     bool valid = false;
+    QString serverTimestamp;
+    QString rawLine;
     bool irBlocked = false;
     int usCenter = -1;
     int usLeft = -1;
@@ -17,14 +20,21 @@ struct Telemetry
 inline Telemetry parseTelemetry(const QString& line)
 {
     Telemetry result;
-    const QStringList p = line.trimmed().split(',');
+    result.rawLine = line.trimmed();
+
+    const QStringList p = result.rawLine.split(',');
 
     if (p.size() < 16 || p[0] != "T")
         return result;
 
+    if (p.size() > 1 && p[1].contains('-') && p[1].contains(':'))
+        result.serverTimestamp = p[1];
+
     auto value = [&](const QString& key, int offset) {
         const int i = p.indexOf(key);
-        return (i >= 0 && i + offset < p.size()) ? p[i + offset] : QString();
+        return (i >= 0 && i + offset < p.size())
+            ? p[i + offset]
+            : QString();
     };
 
     bool ok = false;
@@ -43,5 +53,6 @@ inline Telemetry parseTelemetry(const QString& line)
 
     result.watchdog = value("WD", 1).toInt() != 0;
     result.valid = true;
+
     return result;
 }

@@ -8,6 +8,9 @@
 #include <QPushButton>
 #include <QPixmap>
 #include <QStyle>
+#include <QFont>
+#include <QGraphicsDropShadowEffect>
+#include <QSignalBlocker>
 
 namespace {
 QLabel* statusCard(const QString& title, QLabel*& value)
@@ -35,10 +38,23 @@ QPushButton* controlButton(const QString& text, QChar command)
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent)
 {
+    const bool loggingReady = logger.initialize();
+
     setupUi();
+
+    for (const QString& line : logger.recentEventLines())
+        appendLogLine(line);
+
     setupConnections();
     robot.connectToRobot("10.109.150.232");
     video.connectToCameraBridge("10.109.150.232");
+
+    if (loggingReady) {
+        appendLog("Операторское приложение запущено");
+        appendLog("Постоянные логи: " + logger.directoryPath());
+    } else {
+        appendLog("Не удалось открыть постоянные файлы логирования");
+    }
 }
 
 MainWindow::~MainWindow()
@@ -46,11 +62,12 @@ MainWindow::~MainWindow()
     robot.stop();
     robot.disconnectFromRobot();
     video.disconnectFromCameraBridge();
+    appendLog("Операторское приложение завершено");
 }
 
 void MainWindow::setupUi()
 {
-    setWindowTitle("OmegaBot — Operator Console");
+    setWindowTitle("Гослингмобиль — Operator Console");
     resize(1280, 800);
     setMinimumSize(1000, 650);
 
@@ -60,9 +77,34 @@ void MainWindow::setupUi()
     root->setSpacing(12);
 
     auto* header = new QHBoxLayout;
-    auto* title = new QLabel("Ω OMEGABOT");
+
+    auto* driveLogo = new QLabel("Drive");
+    driveLogo->setObjectName("driveLogo");
+    QFont driveFont("Bahnschrift SemiBold", 32);
+    driveFont.setLetterSpacing(QFont::AbsoluteSpacing, 2.5);
+    driveLogo->setFont(driveFont);
+    auto* driveGlow = new QGraphicsDropShadowEffect(driveLogo);
+    driveGlow->setBlurRadius(24);
+    driveGlow->setOffset(0, 0);
+    driveGlow->setColor(QColor("#00eaff"));
+    driveLogo->setGraphicsEffect(driveGlow);
+    header->addWidget(driveLogo);
+
+    header->addStretch();
+
+    auto* title = new QLabel("ГОСЛИНГМОБИЛЬ");
     title->setObjectName("title");
+    title->setAlignment(Qt::AlignCenter);
+    QFont titleFont("Bahnschrift SemiBold", 24);
+    titleFont.setLetterSpacing(QFont::AbsoluteSpacing, 1.5);
+    title->setFont(titleFont);
+    auto* titleGlow = new QGraphicsDropShadowEffect(title);
+    titleGlow->setBlurRadius(20);
+    titleGlow->setOffset(0, 0);
+    titleGlow->setColor(QColor("#ff36d1"));
+    title->setGraphicsEffect(titleGlow);
     header->addWidget(title);
+
     header->addStretch();
 
     robotStatus = new QLabel("● ROBOT OFFLINE");
@@ -80,7 +122,42 @@ void MainWindow::setupUi()
     videoLabel->setAlignment(Qt::AlignCenter);
     videoLabel->setMinimumSize(700, 480);
     videoLabel->setObjectName("video");
-    content->addWidget(videoLabel, 1);
+    auto* videoArea = new QVBoxLayout;
+    videoArea->setSpacing(8);
+    videoArea->addWidget(videoLabel, 1);
+
+    auto* videoToolbar = new QFrame;
+    videoToolbar->setObjectName("videoToolbar");
+    auto* videoToolbarLayout = new QHBoxLayout(videoToolbar);
+    videoToolbarLayout->setContentsMargins(12, 8, 12, 8);
+
+    auto* qualityCaption = new QLabel("КАЧЕСТВО");
+    qualityCaption->setObjectName("toolbarCaption");
+    videoToolbarLayout->addWidget(qualityCaption);
+
+    qualitySelector = new QComboBox;
+    qualitySelector->addItem("ВЫСОКОЕ", "HIGH");
+    qualitySelector->addItem("СРЕДНЕЕ", "MEDIUM");
+    qualitySelector->addItem("НИЗКОЕ", "LOW");
+    qualitySelector->setCurrentIndex(0);
+    qualitySelector->setMinimumWidth(140);
+    videoToolbarLayout->addWidget(qualitySelector);
+
+    videoToolbarLayout->addSpacing(12);
+
+    recordingStatus = new QLabel("● НЕ ЗАПИСЫВАЕТСЯ");
+    recordingStatus->setObjectName("recordOff");
+    videoToolbarLayout->addWidget(recordingStatus);
+
+    recordButton = new QPushButton("●  НАЧАТЬ ЗАПИСЬ");
+    recordButton->setObjectName("recordButton");
+    recordButton->setCheckable(true);
+    recordButton->setMinimumHeight(38);
+    videoToolbarLayout->addWidget(recordButton);
+
+    videoToolbarLayout->addStretch();
+    videoArea->addWidget(videoToolbar);
+    content->addLayout(videoArea, 1);
 
     auto* controlFrame = new QFrame;
     controlFrame->setObjectName("panel");
@@ -145,8 +222,16 @@ void MainWindow::setupUi()
 
     setStyleSheet(R"(
         QMainWindow, QWidget { background:#101419; color:#e8edf2; font-family:"Segoe UI"; font-size:14px; }
-        #title { font-size:25px; font-weight:700; }
+        #title { color:#ff6de2; font-size:25px; font-weight:700; }
+        #driveLogo { color:#48efff; }
         #video { background:#050708; border:1px solid #303943; border-radius:8px; }
+        #videoToolbar { background:#141b21; border:1px solid #303943; border-radius:8px; }
+        #toolbarCaption { color:#8e9aa7; font-size:12px; font-weight:700; }
+        QComboBox { background:#202831; border:1px solid #3b4652; border-radius:6px; padding:6px 10px; min-height:24px; }
+        QComboBox:hover { border:1px solid #48efff; }
+        #recordButton { color:#ff6de2; border:1px solid #8b3d78; font-weight:700; padding:8px 14px; }
+        #recordButton:checked { color:#ff8c8c; border:1px solid #ff4f87; background:#38202c; }
+        #recordOff { color:#8e9aa7; font-weight:700; }
         #panel, #statusCard { background:#171d23; border:1px solid #303943; border-radius:8px; }
         #panelTitle { font-size:17px; font-weight:700; }
         #cardValue { font-size:17px; font-weight:700; }
@@ -157,9 +242,23 @@ void MainWindow::setupUi()
         #emergency { background:#5a2525; border:1px solid #9e4444; font-weight:700; }
         #offline { color:#e3a3a3; font-weight:600; }
         #online { color:#8bd69a; font-weight:600; }
+        #recordOn { color:#ff6de2; font-weight:700; }
+        #recordError { color:#ff8c8c; font-weight:700; }
         #warning { color:#f1c36d; font-weight:700; }
         #safe { color:#8bd69a; font-weight:700; }
     )");
+
+    connect(qualitySelector, &QComboBox::currentIndexChanged, this, [this](int index) {
+        if (index >= 0)
+            video.setQuality(qualitySelector->itemData(index).toString());
+    });
+
+    connect(recordButton, &QPushButton::toggled, this, [this](bool checked) {
+        if (checked)
+            video.startRecording();
+        else
+            video.stopRecording();
+    });
 
     connect(emergency, &QPushButton::clicked, this, [this] { setCommand('S'); });
     for (auto* button : controlFrame->findChildren<QPushButton*>()) {
@@ -182,6 +281,10 @@ void MainWindow::setupConnections()
     });
 
     connect(&robot, &RobotConnection::telemetryUpdated, this, &MainWindow::updateTelemetry);
+    connect(&robot, &RobotConnection::serverEventReceived, this,
+        [this](const QString& serverTimestamp, const QString& message) {
+            appendServerLog(serverTimestamp, message);
+        });
     connect(&robot, &RobotConnection::errorOccurred, this, [this](const QString& message) {
         appendLog("Ошибка робота: " + message);
     });
@@ -202,6 +305,37 @@ void MainWindow::setupConnections()
     connect(&video, &VideoConnection::statisticsUpdated, this, [this](double fps, int bytes) {
         videoStats->setText(QString("%1 FPS · %2 KB")
             .arg(fps, 0, 'f', 1).arg(bytes / 1024.0, 0, 'f', 1));
+    });
+
+    connect(&video, &VideoConnection::qualityChanged, this, [this](const QString& quality) {
+        const int index = qualitySelector->findData(quality);
+        if (index >= 0 && qualitySelector->currentIndex() != index) {
+            QSignalBlocker blocker(qualitySelector);
+            qualitySelector->setCurrentIndex(index);
+        }
+        appendLog("Качество видео: " + quality);
+    });
+
+    connect(&video, &VideoConnection::recordingChanged, this, [this](bool recording) {
+        QSignalBlocker blocker(recordButton);
+        recordButton->setChecked(recording);
+        recordButton->setText(recording ? "■  ОСТАНОВИТЬ ЗАПИСЬ" : "●  НАЧАТЬ ЗАПИСЬ");
+        recordingStatus->setText(recording ? "● ЗАПИСЬ ИДЁТ" : "● НЕ ЗАПИСЫВАЕТСЯ");
+        recordingStatus->setObjectName(recording ? "recordOn" : "recordOff");
+        recordingStatus->style()->unpolish(recordingStatus);
+        recordingStatus->style()->polish(recordingStatus);
+        appendLog(recording ? "Запись видео начата" : "Запись видео остановлена");
+    });
+
+    connect(&video, &VideoConnection::controlError, this, [this](const QString& message) {
+        QSignalBlocker blocker(recordButton);
+        recordButton->setChecked(false);
+        recordButton->setText("●  НАЧАТЬ ЗАПИСЬ");
+        recordingStatus->setText("● ОШИБКА ЗАПИСИ");
+        recordingStatus->setObjectName("recordError");
+        recordingStatus->style()->unpolish(recordingStatus);
+        recordingStatus->style()->polish(recordingStatus);
+        appendLog("Управление видео: " + message);
     });
 
     connect(&video, &VideoConnection::errorOccurred, this, [this](const QString& message) {
@@ -225,6 +359,8 @@ void MainWindow::updateTelemetry(const Telemetry& telemetry)
     if (!telemetry.valid)
         return;
 
+    logger.writeTelemetry(telemetry);
+
     safetyStatus->setText((telemetry.safeBlocked || telemetry.irBlocked)
         ? "⚠ ПРЕПЯТСТВИЕ" : "● БЕЗОПАСНО");
     safetyStatus->setObjectName((telemetry.safeBlocked || telemetry.irBlocked)
@@ -235,13 +371,41 @@ void MainWindow::updateTelemetry(const Telemetry& telemetry)
     distanceStatus->setText(telemetry.usCenter >= 0
         ? QString("%1 см").arg(telemetry.usCenter) : "—");
 
-    if (telemetry.watchdog)
+    if (telemetry.watchdog && !watchdogActive) {
         appendLog("Сработал watchdog: команда остановлена");
+        watchdogActive = true;
+    } else if (!telemetry.watchdog) {
+        watchdogActive = false;
+    }
 }
 
 void MainWindow::appendLog(const QString& message)
 {
-    logView->append(QDateTime::currentDateTime().toString("HH:mm:ss") + "  " + message);
+    logger.writeLocalEvent(message);
+    appendLogLine(
+        QDateTime::currentDateTime().toString("HH:mm:ss.zzz")
+        + "  LOCAL  " + message
+    );
+}
+
+void MainWindow::appendServerLog(
+    const QString& serverTimestamp,
+    const QString& message
+)
+{
+    logger.writeServerEvent(serverTimestamp, message);
+    appendLogLine(
+        QDateTime::currentDateTime().toString("HH:mm:ss.zzz")
+        + "  SERVER " + serverTimestamp + "  " + message
+    );
+}
+
+void MainWindow::appendLogLine(const QString& line)
+{
+    if (!logView)
+        return;
+
+    logView->append(line);
 }
 
 void MainWindow::keyPressEvent(QKeyEvent* event)
