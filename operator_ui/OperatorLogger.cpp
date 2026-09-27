@@ -104,6 +104,29 @@ QString OperatorLogger::directoryPath() const
     return logDirectory;
 }
 
+QStringList OperatorLogger::recentEventLines(int maxLines) const
+{
+    QStringList result;
+
+    if (!ready || maxLines <= 0)
+        return result;
+
+    QFile file(eventLogPath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+        return result;
+
+    QTextStream input(&file);
+    while (!input.atEnd()) {
+        const QString line = input.readLine();
+        result.append(line);
+
+        if (result.size() > maxLines)
+            result.removeFirst();
+    }
+
+    return result;
+}
+
 bool OperatorLogger::isReady() const
 {
     return ready;
