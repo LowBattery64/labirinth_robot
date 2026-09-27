@@ -99,6 +99,7 @@ camera_bridge.py, без какого-либо браузера, и потому
 import argparse
 import logging
 import queue
+import signal
 import socket
 import struct
 import threading
@@ -826,6 +827,14 @@ def main():
         args.record_to,
         segment_seconds=args.record_segment_seconds,
     )
+
+    def shutdown_handler(signum, frame):
+        logger.info("Получен сигнал завершения (%s), закрываем запись.", signum)
+        controller.stop_recording()
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, shutdown_handler)
+    signal.signal(signal.SIGINT, shutdown_handler)
 
     if args.transport == "motorcortex":
         camera = MotorcortexCameraClient(
