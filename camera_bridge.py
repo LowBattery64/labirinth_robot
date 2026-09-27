@@ -601,10 +601,10 @@ class VideoControlServer:
     def _client_loop(self, client_socket: socket.socket):
         try:
             client_socket.sendall(
-                f"QUALITY {self.controller.get_quality()}\\n".encode()
+                f"QUALITY {self.controller.get_quality()}\n".encode()
             )
             client_socket.sendall(
-                f"RECORD {'ON' if self.controller.is_recording() else 'OFF'}\\n".encode()
+                f"RECORD {'ON' if self.controller.is_recording() else 'OFF'}\n".encode()
             )
 
             buffer = b""
@@ -615,11 +615,11 @@ class VideoControlServer:
 
                 buffer += data
 
-                while b"\\n" in buffer:
-                    line, buffer = buffer.split(b"\\n", 1)
+                while b"\n" in buffer:
+                    line, buffer = buffer.split(b"\n", 1)
                     response = self._handle_command(line.decode("utf-8", errors="replace").strip())
                     if response:
-                        client_socket.sendall((response + "\\n").encode())
+                        client_socket.sendall((response + "\n").encode())
         except (ConnectionError, OSError):
             pass
         finally:
@@ -633,7 +633,7 @@ class VideoControlServer:
 
         if parts == ["STATUS"]:
             return (
-                f"QUALITY {self.controller.get_quality()}\\n"
+                f"QUALITY {self.controller.get_quality()}\n"
                 f"RECORD {'ON' if self.controller.is_recording() else 'OFF'}"
             )
 
@@ -786,6 +786,8 @@ def run(
                     controller.get_quality(),
                     "ON" if controller.is_recording() else "OFF",
                 )
+    finally:
+        controller.stop_recording()
 
 
 def main():
