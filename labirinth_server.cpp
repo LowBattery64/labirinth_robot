@@ -52,6 +52,7 @@
 #include <iomanip>
 #include <sstream>
 #include <deque>
+#include <vector>
 
 #include <unistd.h>
 #include <fcntl.h>
@@ -87,34 +88,40 @@ public:
                 << std::endl;
         }
 
-        writeEvent("Сервер запущен.");
-
         return true;
     }
 
-    void writeEvent(const std::string& message)
+    std::string writeEvent(const std::string& message)
     {
+        const std::string eventTimestamp = timestamp();
+
         if (eventLog.is_open())
         {
             eventLog
-                << timestamp()
+                << eventTimestamp
                 << " | "
                 << message
                 << std::endl;
         }
+
+        return eventTimestamp;
     }
 
-    void writeTelemetry(const std::string& telemetry)
+    std::string writeTelemetry(const std::string& telemetry)
     {
+        const std::string telemetryTimestamp = timestamp();
+
         if (telemetryLog.is_open())
         {
             telemetryLog
-                << timestamp()
+                << telemetryTimestamp
                 << ",\""
                 << telemetry
                 << "\""
                 << std::endl;
         }
+
+        return telemetryTimestamp;
     }
 
 private:
@@ -133,7 +140,17 @@ private:
 #endif
 
         std::ostringstream output;
-        output << std::put_time(&timeInfo, "%Y-%m-%d %H:%M:%S");
+        const auto milliseconds =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                now.time_since_epoch()
+            ) % 1000;
+
+        output
+            << std::put_time(&timeInfo, "%Y-%m-%d %H:%M:%S")
+            << '.'
+            << std::setfill('0')
+            << std::setw(3)
+            << milliseconds.count();
 
         return output.str();
     }
@@ -619,6 +636,8 @@ private:
 
     static constexpr size_t TELEMETRY_HISTORY_SIZE = 1000;
     std::deque<std::string> telemetryHistory;
+    static constexpr size_t EVENT_HISTORY_SIZE = 500;
+    std::deque<std::string> eventHistory;
 
 public:
     RobotServer()
@@ -649,6 +668,7 @@ public:
             return 1;
         }
 
+        publishEvent("Сервер запущен.");
         mainLoop();
 
         return 0;
@@ -746,7 +766,7 @@ private:
                         << "Связь с платой робота потеряна (Serial)."
                         << std::endl;
 
-                    logger.writeEvent("Связь с платой робота потеряна (Serial).");
+                    publishEvent("Связь с платой робота потеряна (Serial).");
 
                     break;
                 }
@@ -768,9 +788,47 @@ private:
             << fromAddress
             << std::endl;
 
-        logger.writeEvent("PC подключён: " + fromAddress);
-
+        replayEventHistory();
         replayTelemetryHistory();
+        publishEvent("PC подключён: " + fromAddress);
+    }
+
+    void replayEventHistory()
+    {
+        if (!networkController.hasClient() || eventHistory.empty())
+            return;
+
+        for (const std::string& eventLine : eventHistory)
+        {
+            const std::string withNewline = eventLine + "\n";
+
+            if (!networkController.sendData(
+                    withNewline.c_str(),
+                    withNewline.size()))
+            {
+                networkController.closeClient();
+                return;
+            }
+        }
+    }
+
+    void publishEvent(const std::string& message)
+    {
+        const std::string eventTimestamp = logger.writeEvent(message);
+        const std::string eventLine =
+            "E," + eventTimestamp + "," + message + "\n";
+
+        eventHistory.push_back(eventLine.substr(0, eventLine.size() - 1));
+        if (eventHistory.size() > EVENT_HISTORY_SIZE)
+            eventHistory.pop_front();
+
+        if (networkController.hasClient())
+        {
+            networkController.sendData(
+                eventLine.c_str(),
+                eventLine.size()
+            );
+        }
     }
 
     void replayTelemetryHistory()
@@ -860,7 +918,7 @@ private:
                 << command
                 << std::endl;
 
-            logger.writeEvent(
+            publishEvent(
                 std::string("Команда: ") + command
             );
         }
@@ -869,6 +927,10 @@ private:
             std::cerr
                 << "Не удалось отправить команду плате робота."
                 << std::endl;
+
+            publishEvent(
+                std::string("Ошибка отправки команды: ") + command
+            );
         }
     }
 
@@ -880,9 +942,17 @@ private:
     {
         std::cout << "Телеметрия: " << line << std::endl;
 
-        logger.writeTelemetry(line);
+        const std::string telemetryTimestamp = logger.writeTelemetry(line);
 
-        telemetryHistory.push_back(line);
+        std::string operatorTelemetry =
+            "T," + telemetryTimestamp;
+
+        if (line.size() > 2 && line[0] == 'T' && line[1] == ',')
+            operatorTelemetry += "," + line.substr(2);
+        else
+            operatorTelemetry += "," + line;
+
+        telemetryHistory.push_back(operatorTelemetry);
         if (telemetryHistory.size() > TELEMETRY_HISTORY_SIZE)
             telemetryHistory.pop_front();
 
@@ -904,9 +974,12 @@ private:
             << "PC отключён."
             << std::endl;
 
-        logger.writeEvent("PC отключён.");
+        publishEvent("PC отключён.");
 
-        serialController.sendCommand('S');
+        if (serialController.sendCommand('S'))
+        {
+            publishEvent("Безопасная остановка после отключения ПК.");
+        }
 
         networkController.closeClient();
 
