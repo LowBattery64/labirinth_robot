@@ -57,13 +57,6 @@ void OperatorLogger::writeLocalEvent(const QString& message)
     if (!ready)
         return;
 
-    if (!serverTimestamp.isEmpty()) {
-        const QString eventKey = serverTimestamp + "|" + message;
-        if (loggedServerEvents.contains(eventKey))
-            return;
-        loggedServerEvents.insert(eventKey);
-    }
-
     appendLine(
         eventLogPath,
         QString("%1 | server=— | LOCAL | %2")
@@ -78,6 +71,13 @@ void OperatorLogger::writeServerEvent(
 {
     if (!ready)
         return;
+
+    if (!serverTimestamp.isEmpty()) {
+        const QString eventKey = serverTimestamp + "|" + message;
+        if (loggedServerEvents.contains(eventKey))
+            return;
+        loggedServerEvents.insert(eventKey);
+    }
 
     appendLine(
         eventLogPath,
