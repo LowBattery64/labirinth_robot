@@ -10,6 +10,7 @@
 #include <QStyle>
 #include <QFont>
 #include <QGraphicsDropShadowEffect>
+#include <QSignalBlocker>
 
 namespace {
 QLabel* statusCard(const QString& title, QLabel*& value)
