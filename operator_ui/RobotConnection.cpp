@@ -4,12 +4,17 @@ RobotConnection::RobotConnection(QObject* parent) : QObject(parent)
 {
     connect(&socket, &QTcpSocket::readyRead, this, &RobotConnection::onReadyRead);
     connect(&socket, &QTcpSocket::connected, this, [this] {
-        emit connectionChanged(true);
+        reconnectTimer.stop();
+        currentCommand = 'S';
         sendCurrentCommand();
+        emit connectionChanged(true);
     });
     connect(&socket, &QTcpSocket::disconnected, this, [this] {
         currentCommand = 'S';
         emit connectionChanged(false);
+
+        if (reconnectEnabled)
+            reconnectTimer.start();
     });
     connect(&socket, &QTcpSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
         emit errorOccurred(socket.errorString());
@@ -17,17 +22,29 @@ RobotConnection::RobotConnection(QObject* parent) : QObject(parent)
 
     commandTimer.setInterval(100);
     connect(&commandTimer, &QTimer::timeout, this, &RobotConnection::sendCurrentCommand);
+
+    reconnectTimer.setInterval(1000);
+    connect(&reconnectTimer, &QTimer::timeout, this, [this] {
+        if (reconnectEnabled && socket.state() == QAbstractSocket::UnconnectedState)
+            socket.connectToHost(robotAddress, robotPort);
+    });
 }
 
 void RobotConnection::connectToRobot(const QString& address, quint16 port)
 {
+    robotAddress = address;
+    robotPort = port;
+    reconnectEnabled = true;
+
     socket.abort();
-    socket.connectToHost(address, port);
+    socket.connectToHost(robotAddress, robotPort);
     commandTimer.start();
 }
 
 void RobotConnection::disconnectFromRobot()
 {
+    reconnectEnabled = false;
+    reconnectTimer.stop();
     stop();
     commandTimer.stop();
     socket.disconnectFromHost();
