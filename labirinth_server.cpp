@@ -52,7 +52,6 @@
 #include <iomanip>
 #include <sstream>
 #include <deque>
-#include <vector>
 
 #include <unistd.h>
 #include <fcntl.h>
@@ -956,11 +955,11 @@ private:
         if (telemetryHistory.size() > TELEMETRY_HISTORY_SIZE)
             telemetryHistory.pop_front();
 
-        std::string withNewline = line + "\n";
+        operatorTelemetry += "\n";
 
         networkController.sendData(
-            withNewline.c_str(),
-            withNewline.size()
+            operatorTelemetry.c_str(),
+            operatorTelemetry.size()
         );
     }
 
