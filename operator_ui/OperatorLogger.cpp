@@ -48,6 +48,7 @@ bool OperatorLogger::initialize()
     eventFile.close();
 
     ready = true;
+    loadKnownEntries();
     return true;
 }
 
@@ -55,6 +56,13 @@ void OperatorLogger::writeLocalEvent(const QString& message)
 {
     if (!ready)
         return;
+
+    if (!serverTimestamp.isEmpty()) {
+        const QString eventKey = serverTimestamp + "|" + message;
+        if (loggedServerEvents.contains(eventKey))
+            return;
+        loggedServerEvents.insert(eventKey);
+    }
 
     appendLine(
         eventLogPath,
@@ -82,6 +90,12 @@ void OperatorLogger::writeTelemetry(const Telemetry& telemetry)
 {
     if (!ready || !telemetry.valid)
         return;
+
+    if (!telemetry.serverTimestamp.isEmpty()) {
+        if (loggedTelemetryTimestamps.contains(telemetry.serverTimestamp))
+            return;
+        loggedTelemetryTimestamps.insert(telemetry.serverTimestamp);
+    }
 
     appendLine(
         telemetryLogPath,
@@ -125,6 +139,65 @@ QStringList OperatorLogger::recentEventLines(int maxLines) const
     }
 
     return result;
+}
+
+void OperatorLogger::loadKnownEntries()
+{
+    loggedServerEvents.clear();
+    loggedTelemetryTimestamps.clear();
+
+    QFile eventFile(eventLogPath);
+    if (eventFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QTextStream input(&eventFile);
+
+        while (!input.atEnd()) {
+            const QString line = input.readLine();
+            const QString serverMarker = " | server=";
+            const QString typeMarker = " | SERVER | ";
+            const int serverStart = line.indexOf(serverMarker);
+            const int typeStart = line.indexOf(typeMarker);
+
+            if (serverStart >= 0 && typeStart > serverStart) {
+                const int timestampStart = serverStart + serverMarker.size();
+                const QString serverTimestamp = line.mid(
+                    timestampStart,
+                    typeStart - timestampStart
+                );
+                const QString message = line.mid(typeStart + typeMarker.size());
+
+                if (!serverTimestamp.isEmpty())
+                    loggedServerEvents.insert(serverTimestamp + "|" + message);
+            }
+        }
+    }
+
+    QFile telemetryFile(telemetryLogPath);
+    if (telemetryFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QTextStream input(&telemetryFile);
+
+        if (!input.atEnd())
+            input.readLine();
+
+        while (!input.atEnd()) {
+            const QString line = input.readLine();
+            const int firstComma = line.indexOf(',');
+            const int secondComma = line.indexOf(',', firstComma + 1);
+
+            if (firstComma < 0 || secondComma < 0)
+                continue;
+
+            QString serverTimestamp = line.mid(
+                firstComma + 1,
+                secondComma - firstComma - 1
+            );
+
+            if (serverTimestamp.startsWith('"') && serverTimestamp.endsWith('"'))
+                serverTimestamp = serverTimestamp.mid(1, serverTimestamp.size() - 2);
+
+            if (!serverTimestamp.isEmpty())
+                loggedTelemetryTimestamps.insert(serverTimestamp);
+        }
+    }
 }
 
 bool OperatorLogger::isReady() const
