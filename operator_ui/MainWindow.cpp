@@ -11,6 +11,7 @@
 #include <QFont>
 #include <QGraphicsDropShadowEffect>
 #include <QSignalBlocker>
+#include <QMessageBox>
 
 namespace {
 QLabel* statusCard(const QString& title, QLabel*& value)
@@ -38,10 +39,19 @@ QPushButton* controlButton(const QString& text, QChar command)
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent)
 {
+    const bool loggingReady = logger.initialize();
+
     setupUi();
     setupConnections();
     robot.connectToRobot("10.109.150.232");
     video.connectToCameraBridge("10.109.150.232");
+
+    if (loggingReady) {
+        appendLog("Операторское приложение запущено");
+        appendLog("Постоянные логи: " + logger.directoryPath());
+    } else {
+        appendLog("Не удалось открыть постоянные файлы логирования");
+    }
 }
 
 MainWindow::~MainWindow()
@@ -49,6 +59,7 @@ MainWindow::~MainWindow()
     robot.stop();
     robot.disconnectFromRobot();
     video.disconnectFromCameraBridge();
+    appendLog("Операторское приложение завершено");
 }
 
 void MainWindow::setupUi()
@@ -267,6 +278,10 @@ void MainWindow::setupConnections()
     });
 
     connect(&robot, &RobotConnection::telemetryUpdated, this, &MainWindow::updateTelemetry);
+    connect(&robot, &RobotConnection::serverEventReceived, this,
+        [this](const QString& serverTimestamp, const QString& message) {
+            appendServerLog(serverTimestamp, message);
+        });
     connect(&robot, &RobotConnection::errorOccurred, this, [this](const QString& message) {
         appendLog("Ошибка робота: " + message);
     });
@@ -340,6 +355,8 @@ void MainWindow::updateTelemetry(const Telemetry& telemetry)
     if (!telemetry.valid)
         return;
 
+    logger.writeTelemetry(telemetry);
+
     safetyStatus->setText((telemetry.safeBlocked || telemetry.irBlocked)
         ? "⚠ ПРЕПЯТСТВИЕ" : "● БЕЗОПАСНО");
     safetyStatus->setObjectName((telemetry.safeBlocked || telemetry.irBlocked)
@@ -350,13 +367,41 @@ void MainWindow::updateTelemetry(const Telemetry& telemetry)
     distanceStatus->setText(telemetry.usCenter >= 0
         ? QString("%1 см").arg(telemetry.usCenter) : "—");
 
-    if (telemetry.watchdog)
+    if (telemetry.watchdog && !watchdogActive) {
         appendLog("Сработал watchdog: команда остановлена");
+        watchdogActive = true;
+    } else if (!telemetry.watchdog) {
+        watchdogActive = false;
+    }
 }
 
 void MainWindow::appendLog(const QString& message)
 {
-    logView->append(QDateTime::currentDateTime().toString("HH:mm:ss") + "  " + message);
+    logger.writeLocalEvent(message);
+    appendLogLine(
+        QDateTime::currentDateTime().toString("HH:mm:ss.zzz")
+        + "  LOCAL  " + message
+    );
+}
+
+void MainWindow::appendServerLog(
+    const QString& serverTimestamp,
+    const QString& message
+)
+{
+    logger.writeServerEvent(serverTimestamp, message);
+    appendLogLine(
+        QDateTime::currentDateTime().toString("HH:mm:ss.zzz")
+        + "  SERVER " + serverTimestamp + "  " + message
+    );
+}
+
+void MainWindow::appendLogLine(const QString& line)
+{
+    if (!logView)
+        return;
+
+    logView->append(line);
 }
 
 void MainWindow::keyPressEvent(QKeyEvent* event)
