@@ -12,6 +12,9 @@ public:
     explicit VideoConnection(QObject* parent = nullptr);
     void connectToCameraBridge(const QString& address, quint16 port = 5001);
     void disconnectFromCameraBridge();
+    void setQuality(const QString& quality);
+    void startRecording();
+    void stopRecording();
 
 signals:
     void connectionChanged(bool connected);
