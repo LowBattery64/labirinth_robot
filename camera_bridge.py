@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+
 """
 OmegaBot — мост между TrackingCam3 и оператором.
 
