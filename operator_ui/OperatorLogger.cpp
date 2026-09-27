@@ -157,6 +157,6 @@ void OperatorLogger::appendLine(
 QString OperatorLogger::csvEscape(const QString& value)
 {
     QString escaped = value;
-    escaped.replace('"', """");
-    return """ + escaped + """;
+    escaped.replace('"', "\"\"");
+    return "\"" + escaped + "\"";
 }
