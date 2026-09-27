@@ -2,6 +2,8 @@
 #include <QMainWindow>
 #include <QLabel>
 #include <QTextEdit>
+#include <QComboBox>
+#include <QPushButton>
 #include <QKeyEvent>
 #include "RobotConnection.h"
 #include "VideoConnection.h"
@@ -29,6 +31,9 @@ private:
     QLabel* safetyStatus = nullptr;
     QLabel* distanceStatus = nullptr;
     QLabel* videoStats = nullptr;
+    QLabel* recordingStatus = nullptr;
+    QComboBox* qualitySelector = nullptr;
+    QPushButton* recordButton = nullptr;
     QTextEdit* logView = nullptr;
     RobotConnection robot;
     VideoConnection video;
