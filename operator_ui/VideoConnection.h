@@ -24,6 +24,10 @@ private slots:
 
 private:
     QTcpSocket socket;
+    QTimer reconnectTimer;
+    QString cameraAddress;
+    quint16 cameraPort = 5001;
+    bool reconnectEnabled = false;
     QByteArray buffer;
     quint32 expectedFrameSize = 0;
     int frameCounter = 0;
