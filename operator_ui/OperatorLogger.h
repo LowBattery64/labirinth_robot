@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
 
 #include "Telemetry.h"
 
@@ -14,6 +15,7 @@ public:
     void writeTelemetry(const Telemetry& telemetry);
 
     QString directoryPath() const;
+    QStringList recentEventLines(int maxLines = 200) const;
     bool isReady() const;
 
 private:
