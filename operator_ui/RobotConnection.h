@@ -28,6 +28,10 @@ private slots:
 private:
     QTcpSocket socket;
     QTimer commandTimer;
+    QTimer reconnectTimer;
+    QString robotAddress;
+    quint16 robotPort = 5000;
+    bool reconnectEnabled = false;
     QByteArray receiveBuffer;
     QChar currentCommand = 'S';
 };
