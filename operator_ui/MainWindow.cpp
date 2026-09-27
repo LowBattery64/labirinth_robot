@@ -11,7 +11,6 @@
 #include <QFont>
 #include <QGraphicsDropShadowEffect>
 #include <QSignalBlocker>
-#include <QMessageBox>
 
 namespace {
 QLabel* statusCard(const QString& title, QLabel*& value)
