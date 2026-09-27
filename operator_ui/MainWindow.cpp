@@ -41,6 +41,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent)
     const bool loggingReady = logger.initialize();
 
     setupUi();
+
+    for (const QString& line : logger.recentEventLines())
+        appendLogLine(line);
+
     setupConnections();
     robot.connectToRobot("10.109.150.232");
     video.connectToCameraBridge("10.109.150.232");
