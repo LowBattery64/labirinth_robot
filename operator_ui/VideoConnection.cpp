@@ -6,6 +6,23 @@
 VideoConnection::VideoConnection(QObject* parent) : QObject(parent)
 {
     connect(&socket, &QTcpSocket::readyRead, this, &VideoConnection::onReadyRead);
+    connect(&controlSocket, &QTcpSocket::readyRead, this, &VideoConnection::onControlReadyRead);
+
+    connect(&controlSocket, &QTcpSocket::connected, this, [this] {
+        controlReconnectTimer.stop();
+        sendControlCommand("STATUS");
+    });
+
+    connect(&controlSocket, &QTcpSocket::disconnected, this, [this] {
+        if (reconnectEnabled)
+            controlReconnectTimer.start();
+    });
+
+    connect(&controlSocket, &QTcpSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
+        emit controlError(controlSocket.errorString());
+        if (reconnectEnabled)
+            controlReconnectTimer.start();
+    });
     connect(&socket, &QTcpSocket::connected, this, [this] {
         reconnectTimer.stop();
         buffer.clear();
@@ -29,6 +46,11 @@ VideoConnection::VideoConnection(QObject* parent) : QObject(parent)
         if (reconnectEnabled && socket.state() == QAbstractSocket::UnconnectedState)
             socket.connectToHost(cameraAddress, cameraPort);
     });
+
+    controlReconnectTimer.setInterval(1000);
+    connect(&controlReconnectTimer, &QTimer::timeout, this, [this] {
+        connectControl();
+    });
 }
 
 void VideoConnection::connectToCameraBridge(const QString& address, quint16 port)
@@ -39,13 +61,77 @@ void VideoConnection::connectToCameraBridge(const QString& address, quint16 port
 
     socket.abort();
     socket.connectToHost(cameraAddress, cameraPort);
+    connectControl();
 }
 
 void VideoConnection::disconnectFromCameraBridge()
 {
     reconnectEnabled = false;
     reconnectTimer.stop();
+    controlReconnectTimer.stop();
     socket.disconnectFromHost();
+    controlSocket.disconnectFromHost();
+}
+
+void VideoConnection::connectControl()
+{
+    if (!reconnectEnabled || controlSocket.state() != QAbstractSocket::UnconnectedState)
+        return;
+
+    controlSocket.abort();
+    controlSocket.connectToHost(cameraAddress, 5002);
+}
+
+void VideoConnection::sendControlCommand(const QString& command)
+{
+    if (controlSocket.state() != QAbstractSocket::ConnectedState)
+        return;
+
+    controlSocket.write(command.toUtf8() + "\n");
+}
+
+void VideoConnection::setQuality(const QString& quality)
+{
+    selectedQuality = quality.toUpper();
+    sendControlCommand("QUALITY " + selectedQuality);
+}
+
+void VideoConnection::startRecording()
+{
+    sendControlCommand("RECORD START");
+}
+
+void VideoConnection::stopRecording()
+{
+    sendControlCommand("RECORD STOP");
+}
+
+void VideoConnection::onControlReadyRead()
+{
+    controlBuffer += controlSocket.readAll();
+
+    while (true) {
+        const int newline = controlBuffer.indexOf('\n');
+        if (newline < 0)
+            return;
+
+        const QString line = QString::fromUtf8(controlBuffer.left(newline)).trimmed();
+        controlBuffer.remove(0, newline + 1);
+
+        if (line.startsWith("QUALITY ")) {
+            const QString quality = line.mid(8).trimmed();
+            selectedQuality = quality;
+            emit qualityChanged(quality);
+        } else if (line == "RECORD ON") {
+            recording = true;
+            emit recordingChanged(true);
+        } else if (line == "RECORD OFF") {
+            recording = false;
+            emit recordingChanged(false);
+        } else if (line.startsWith("ERROR ")) {
+            emit controlError(line.mid(6));
+        }
+    }
 }
 
 void VideoConnection::onReadyRead()
