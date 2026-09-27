@@ -7,6 +7,7 @@ VideoConnection::VideoConnection(QObject* parent) : QObject(parent)
 {
     connect(&socket, &QTcpSocket::readyRead, this, &VideoConnection::onReadyRead);
     connect(&socket, &QTcpSocket::connected, this, [this] {
+        reconnectTimer.stop();
         buffer.clear();
         expectedFrameSize = 0;
         frameCounter = 0;
@@ -15,20 +16,35 @@ VideoConnection::VideoConnection(QObject* parent) : QObject(parent)
     });
     connect(&socket, &QTcpSocket::disconnected, this, [this] {
         emit connectionChanged(false);
+
+        if (reconnectEnabled)
+            reconnectTimer.start();
     });
     connect(&socket, &QTcpSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
         emit errorOccurred(socket.errorString());
+    });
+
+    reconnectTimer.setInterval(1000);
+    connect(&reconnectTimer, &QTimer::timeout, this, [this] {
+        if (reconnectEnabled && socket.state() == QAbstractSocket::UnconnectedState)
+            socket.connectToHost(cameraAddress, cameraPort);
     });
 }
 
 void VideoConnection::connectToCameraBridge(const QString& address, quint16 port)
 {
+    cameraAddress = address;
+    cameraPort = port;
+    reconnectEnabled = true;
+
     socket.abort();
-    socket.connectToHost(address, port);
+    socket.connectToHost(cameraAddress, cameraPort);
 }
 
 void VideoConnection::disconnectFromCameraBridge()
 {
+    reconnectEnabled = false;
+    reconnectTimer.stop();
     socket.disconnectFromHost();
 }
 
