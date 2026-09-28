@@ -1,4 +1,4 @@
-# Скрипты запуска OmegaBot
+# Скрипты запуска Робота
 
 Папка содержит скрипты для автоматизированного запуска и остановки текущей системы.
 
@@ -40,29 +40,6 @@ PID-файлы:
 
     bash scripts/stop_robot.sh
 
-### start_omegabot.ps1
-
-Основной скрипт запуска с Windows ПК.
-
-Он:
-1. проверяет SSH к Raspberry Pi;
-2. запускает scripts/start_robot.sh;
-3. ждёт TCP 5000 и 5001;
-4. открывает страницу TrackingCam3;
-5. при необходимости собирает operator_ui;
-6. запускает OmegaBotOperator.exe.
-
-Запуск:
-    .\scripts\start_omegabot.ps1
-
-Принудительная пересборка:
-    .\scripts\start_omegabot.ps1 -Build
-
-### stop_omegabot.ps1
-
-Останавливает Operator UI и процессы робота.
-
-    .\scripts\stop_omegabot.ps1
 
 # Первый запуск
 
@@ -77,13 +54,6 @@ PID-файлы:
 Проверка:
     ssh -o BatchMode=yes raspberry@10.109.150.232 "echo SSH_OK"
 
-## ПК
-
-Нужны:
-- OpenSSH Client;
-- CMake;
-- Visual Studio 2022 с C++;
-- Qt 6 MSVC 2022 x64.
 
 ## Raspberry Pi
 
@@ -94,12 +64,6 @@ PID-файлы:
 - подключённая Arduino;
 - смонтированный USB-накопитель для записи.
 
-## Запуск
-
-Из корня репозитория:
-    .\scripts\start_omegabot.ps1
-
-После запуска Raspberry Pi собирает и запускает сервер, запускается видеомост, браузер открывает страницу камеры, затем запускается Operator UI.
 
 # Ограничения
 
