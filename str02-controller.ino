@@ -35,6 +35,17 @@ public:
 
 
 // ============================================================
+// Общие константы движения
+// ============================================================
+
+// Используется и обычным телеуправлением (CommandProtocol), и
+// автономным возвратом (AutonomousReturn) - обе логики должны
+// давать одинаковую по величине скорость, иначе пройденное
+// расстояние при возврате не будет соответствовать записанному.
+const int DEFAULT_DRIVE_SPEED = 80;
+
+
+// ============================================================
 // Управление моторами
 // ============================================================
 
@@ -377,19 +388,138 @@ private:
 
 
 // ============================================================
+// История перемещений (для автономного возврата)
+// ============================================================
+//
+// Хранит завершённые отрезки движения (команда + длительность),
+// начиная от последнего момента, когда связь с оператором была
+// уверенно установлена. AutonomousReturn проходит эту историю в
+// обратном порядке, инвертируя каждую команду, чтобы вернуть
+// робота примерно туда, где связь ещё была.
+//
+// Это не полноценная локализация/SLAM, а простое "хлебное
+// крошево" по времени выполнения команд - для набора без
+// одометрии/картографирования этого достаточно, чтобы выполнить
+// требование ТЗ по возврату в зону связи.
+// ============================================================
+
+class MoveHistory
+{
+public:
+    struct Move
+    {
+        char command;
+        unsigned long durationMs;
+    };
+
+private:
+    static const uint8_t CAPACITY = 64;
+
+    Move moves[CAPACITY];
+    uint8_t count;
+
+public:
+    MoveHistory()
+        : count(0)
+    {
+    }
+
+    void push(char command, unsigned long durationMs)
+    {
+        if (durationMs == 0)
+        {
+            return;
+        }
+
+        if (count >= CAPACITY)
+        {
+            // Буфер полон - теряем самый старый отрезок пути.
+            // Робот в этом случае вернётся не в точку самой первой
+            // потери связи, а в ближайшую по времени зафиксированную -
+            // приемлемый компромисс при ограниченной памяти Mega2560.
+            for (uint8_t i = 1; i < CAPACITY; i++)
+            {
+                moves[i - 1] = moves[i];
+            }
+
+            count = CAPACITY - 1;
+        }
+
+        moves[count].command = command;
+        moves[count].durationMs = durationMs;
+        count++;
+    }
+
+    bool popInverse(char &inverseCommand, unsigned long &durationMs)
+    {
+        if (count == 0)
+        {
+            return false;
+        }
+
+        count--;
+
+        inverseCommand = invert(moves[count].command);
+        durationMs = moves[count].durationMs;
+
+        return true;
+    }
+
+    bool isEmpty() const
+    {
+        return count == 0;
+    }
+
+    uint8_t size() const
+    {
+        return count;
+    }
+
+    void clear()
+    {
+        count = 0;
+    }
+
+private:
+    static char invert(char command)
+    {
+        switch (command)
+        {
+        case 'F':
+            return 'B';
+
+        case 'B':
+            return 'F';
+
+        case 'L':
+            return 'R';
+
+        case 'R':
+            return 'L';
+
+        default:
+            return 'S';
+        }
+    }
+};
+
+
+// ============================================================
 // Команды управления
 // ============================================================
 
 class CommandProtocol
 {
 private:
-    static const int DEFAULT_SPEED = 80;
     static const unsigned long COMMAND_TIMEOUT_MS = 500;
 
     MotorController &motors;
     SafetyController &safety;
 
+    MoveHistory history;
+
     unsigned long lastCommandMs;
+    unsigned long commandStartMs;
     char requestedCommand;
     bool watchdogStopped;
 
@@ -401,6 +531,7 @@ public:
         : motors(motorController),
           safety(safetyController),
           lastCommandMs(0),
+          commandStartMs(0),
           requestedCommand('S'),
           watchdogStopped(false)
     {
@@ -409,6 +540,7 @@ public:
     void begin()
     {
         lastCommandMs = millis();
+        commandStartMs = millis();
     }
 
     void poll()
@@ -426,7 +558,18 @@ public:
         }
 
         lastCommandMs = millis();
-        requestedCommand = command;
+
+        if (command != requestedCommand)
+        {
+            // Команда действительно изменилась (а не просто повторно
+            // пришла та же самая "липкая" команда от оператора) -
+            // фиксируем в истории, сколько прошёл предыдущий отрезок.
+            recordSegment();
+
+            commandStartMs = millis();
+            requestedCommand = command;
+        }
+
         watchdogStopped = false;
 
         switch (command)
@@ -438,24 +581,24 @@ public:
             }
             else
             {
-                motors.setLeft(DEFAULT_SPEED);
-                motors.setRight(-DEFAULT_SPEED);
+                motors.setLeft(DEFAULT_DRIVE_SPEED);
+                motors.setRight(-DEFAULT_DRIVE_SPEED);
             }
             break;
 
         case 'B':
-            motors.setLeft(-DEFAULT_SPEED);
-            motors.setRight(DEFAULT_SPEED);
+            motors.setLeft(-DEFAULT_DRIVE_SPEED);
+            motors.setRight(DEFAULT_DRIVE_SPEED);
             break;
 
         case 'L':
-            motors.setLeft(-DEFAULT_SPEED);
-            motors.setRight(-DEFAULT_SPEED);
+            motors.setLeft(-DEFAULT_DRIVE_SPEED);
+            motors.setRight(-DEFAULT_DRIVE_SPEED);
             break;
 
         case 'R':
-            motors.setLeft(DEFAULT_SPEED);
-            motors.setRight(DEFAULT_SPEED);
+            motors.setLeft(DEFAULT_DRIVE_SPEED);
+            motors.setRight(DEFAULT_DRIVE_SPEED);
             break;
 
         case 'S':
@@ -481,6 +624,12 @@ public:
             now - lastCommandMs > COMMAND_TIMEOUT_MS
         )
         {
+            // Оператор пропал - фиксируем в истории отрезок,
+            // который выполнялся в момент потери связи, иначе самый
+            // "свежий" (и часто самый длинный) кусок пути никогда не
+            // попадёт в историю для автономного возврата.
+            recordSegment();
+
             motors.stop();
             requestedCommand = 'S';
             watchdogStopped = true;
@@ -497,7 +646,38 @@ public:
         return watchdogStopped;
     }
 
+    // Сколько миллисекунд прошло с последней команды оператора.
+    // Используется AutonomousReturn, чтобы определить полную
+    // потерю связи (порог заведомо больше моторного watchdog'а) и
+    // момент, когда оператор снова на связи.
+    unsigned long millisSinceLastCommand() const
+    {
+        return millis() - lastCommandMs;
+    }
+
+    MoveHistory &moveHistory()
+    {
+        return history;
+    }
+
+    // Вызывается, когда оператор снова взял управление после
+    // автономного возврата: точка, в которой это произошло, сама
+    // становится новой "зоной связи", поэтому старую историю пути
+    // имеет смысл забыть и вести её заново с этого места.
+    void resetHistoryAfterManualResume()
+    {
+        history.clear();
+    }
+
 private:
+    void recordSegment()
+    {
+        if (requestedCommand != 'S')
+        {
+            history.push(requestedCommand, millis() - commandStartMs);
+        }
+    }
+
     bool isValidCommand(char command) const
     {
         switch (command)
@@ -517,6 +697,174 @@ private:
 
 
 // ============================================================
+// Автономный возврат при потере связи
+// ============================================================
+//
+// Если оператор не подавал команд дольше LOST_SIGNAL_MS (это
+// заведомо больше моторного watchdog'а в CommandProtocol, чтобы
+// сначала сработала обычная безопасная остановка, и только потом -
+// автономное поведение), робот считает связь потерянной и начинает
+// проходить записанную историю движений в обратном порядке и с
+// инвертированными командами, пока не вернётся примерно туда, где
+// связь ещё была уверенно установлена, либо пока не восстановится
+// связь с оператором - в этом случае возврат немедленно
+// прерывается и управление отдаётся обратно оператору.
+// ============================================================
+
+class AutonomousReturn
+{
+private:
+    static const unsigned long LOST_SIGNAL_MS = 3000;
+
+    MotorController &motors;
+    SafetyController &safety;
+    CommandProtocol &commandProtocol;
+
+    bool active;
+    char currentCommand;
+    unsigned long currentDurationMs;
+    unsigned long segmentStartMs;
+
+public:
+    AutonomousReturn(
+        MotorController &motorController,
+        SafetyController &safetyController,
+        CommandProtocol &protocol
+    )
+        : motors(motorController),
+          safety(safetyController),
+          commandProtocol(protocol),
+          active(false),
+          currentCommand('S'),
+          currentDurationMs(0),
+          segmentStartMs(0)
+    {
+    }
+
+    void poll()
+    {
+        bool operatorRecentlyActive =
+            commandProtocol.millisSinceLastCommand() < LOST_SIGNAL_MS;
+
+        if (!active)
+        {
+            if (
+                !operatorRecentlyActive &&
+                !commandProtocol.moveHistory().isEmpty()
+            )
+            {
+                beginReturn();
+            }
+
+            return;
+        }
+
+        if (operatorRecentlyActive)
+        {
+            // Оператор снова на связи. CommandProtocol::poll() в этой
+            // же итерации loop() уже успел обработать его свежую
+            // команду и выставить моторы соответствующим образом
+            // (millisSinceLastCommand не может обновиться иначе) -
+            // поэтому здесь НЕ вызываем motors.stop(), чтобы не
+            // затереть эту команду обратно в остановку. Мы лишь
+            // отдаём управление обратно и считаем текущее место
+            // новой "точкой связи".
+            active = false;
+            commandProtocol.resetHistoryAfterManualResume();
+            return;
+        }
+
+        runCurrentSegment();
+    }
+
+    bool isActive() const
+    {
+        return active;
+    }
+
+private:
+    void beginReturn()
+    {
+        active = true;
+        advanceToNextSegment();
+    }
+
+    void advanceToNextSegment()
+    {
+        if (!commandProtocol.moveHistory().popInverse(currentCommand, currentDurationMs))
+        {
+            // История пройдена целиком - останавливаемся и ждём,
+            // пока не восстановится связь либо кто-то не заберёт
+            // робота вручную.
+            motors.stop();
+            active = false;
+            return;
+        }
+
+        segmentStartMs = millis();
+        applyCommand(currentCommand);
+    }
+
+    void runCurrentSegment()
+    {
+        if (currentCommand == 'F' && safety.isForwardBlocked())
+        {
+            // Путь возврата неожиданно перекрыт - стоим и ждём,
+            // не тратя время сегмента впустую, пока не освободится.
+            motors.stop();
+            segmentStartMs = millis();
+            return;
+        }
+
+        if (millis() - segmentStartMs >= currentDurationMs)
+        {
+            advanceToNextSegment();
+        }
+    }
+
+    void applyCommand(char command)
+    {
+        switch (command)
+        {
+        case 'F':
+            if (safety.isForwardBlocked())
+            {
+                motors.stop();
+            }
+            else
+            {
+                motors.setLeft(DEFAULT_DRIVE_SPEED);
+                motors.setRight(-DEFAULT_DRIVE_SPEED);
+            }
+            break;
+
+        case 'B':
+            // На движение назад нет заднего дальномера - как и в
+            // обычном телеуправлении, полагаемся на то, что путь,
+            // который только что был пройден вперёд, свободен.
+            motors.setLeft(-DEFAULT_DRIVE_SPEED);
+            motors.setRight(DEFAULT_DRIVE_SPEED);
+            break;
+
+        case 'L':
+            motors.setLeft(-DEFAULT_DRIVE_SPEED);
+            motors.setRight(-DEFAULT_DRIVE_SPEED);
+            break;
+
+        case 'R':
+            motors.setLeft(DEFAULT_DRIVE_SPEED);
+            motors.setRight(DEFAULT_DRIVE_SPEED);
+            break;
+
+        default:
+            motors.stop();
+            break;
+        }
+    }
+};
+
+
+// ============================================================
 // Объекты системы
 // ============================================================
 
@@ -527,6 +875,7 @@ SpeedSensorArray speedSensors;
 CameraTracker camera;
 SafetyController safetyController(ultrasonicSensors);
 CommandProtocol commandProtocol(motors, safetyController);
+AutonomousReturn autonomousReturn(motors, safetyController, commandProtocol);
 
 unsigned long lastTelemetryMs = 0;
 
@@ -573,7 +922,13 @@ void sendTelemetry()
     Serial.print(",WD,");
     Serial.print(commandProtocol.wasStoppedByWatchdog());
 
-    // Опрос TrackingCam временно отключён для диагностики.
+    Serial.print(",MODE,");
+    Serial.print(autonomousReturn.isActive() ? "AUTO" : "TELEOP");
+
+    Serial.print(",HIST,");
+    Serial.print(commandProtocol.moveHistory().size());
+
+    // Опрос TrackingCam на Arduino временно отключён для диагностики.
 
     Serial.println();
 }
@@ -618,6 +973,12 @@ void loop()
     commandProtocol.safetyPoll();
 
     commandProtocol.watchdogPoll();
+
+    // К моменту, когда AutonomousReturn решает взять управление,
+    // CommandProtocol уже перевёл requestedCommand в 'S' (через
+    // watchdogPoll), поэтому safetyPoll/watchdogPoll выше больше не
+    // трогают моторы и не мешают автономному движению.
+    autonomousReturn.poll();
 
     unsigned long now = millis();
 
