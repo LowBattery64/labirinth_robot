@@ -36,6 +36,7 @@ private:
     std::ofstream telemetryLog;
 
 public:
+// Открывает файлы логов и создаёт заголовок CSV
     bool initialize()
     {
         eventLog.open("robot.log", std::ios::app);
@@ -56,6 +57,7 @@ public:
         return true;
     }
 
+// Записывает событие в лог и возвращает его время
     std::string writeEvent(const std::string& message)
     {
         const std::string eventTimestamp = timestamp();
@@ -72,6 +74,7 @@ public:
         return eventTimestamp;
     }
 
+// Записывает телеметрию в CSV и возвращает её время
     std::string writeTelemetry(const std::string& telemetry)
     {
         const std::string telemetryTimestamp = timestamp();
@@ -90,6 +93,7 @@ public:
     }
 
 private:
+// Возвращает текущее время с миллисекундами
     std::string timestamp() const
     {
         const auto now = std::chrono::system_clock::now();
@@ -142,6 +146,7 @@ public:
     {
     }
 
+// Открывает Serial-порт и настраивает соединение с платой
     bool initialize()
     {
         serialFileDescriptor = open(
@@ -194,11 +199,13 @@ public:
         return true;
     }
 
+// Возвращает файловый дескриптор Serial-порта
     int getFileDescriptor() const
     {
         return serialFileDescriptor;
     }
 
+// Отправляет одну команду на плату робота
     bool sendCommand(char command)
     {
         if (serialFileDescriptor < 0)
@@ -213,7 +220,7 @@ public:
         ) == 1;
     }
 
-
+// Читает данные от платы и передаёт готовые строки обработчику
     bool pollLines(const std::function<void(const std::string&)>& onLine)
     {
         char chunk[256];
@@ -259,6 +266,7 @@ public:
         return true;
     }
 
+// Закрывает Serial-соединение
     void closeConnection()
     {
         if (serialFileDescriptor >= 0)
@@ -268,12 +276,14 @@ public:
         }
     }
 
+// Закрывает Serial-соединение при уничтожении объекта
     ~SerialController()
     {
         closeConnection();
     }
 
 private:
+// Настраивает скорость передачи данных Serial-порта
     void configureBaudRate(
         struct termios& serialSettings
     )
@@ -289,6 +299,7 @@ private:
         );
     }
 
+// Настраивает основные параметры Serial-соединения
     void configureCommunicationMode(
         struct termios& serialSettings
     )
@@ -304,6 +315,7 @@ private:
         serialSettings.c_cflag |= CS8;
     }
 
+// Отключает стандартную обработку ввода и вывода Serial.
     void configureInputOutputMode(
         struct termios& serialSettings
     )
@@ -342,6 +354,7 @@ public:
     {
     }
 
+// Запускает TCP-сервер и начинает принимать подключения.
     bool initialize()
     {
         serverSocket = socket(
@@ -378,24 +391,25 @@ public:
         return true;
     }
 
+// Возвращает дескриптор серверного сокета
     int getServerSocket() const
     {
         return serverSocket;
     }
 
+// Возвращает дескриптор подключения оператора
     int getClientSocket() const
     {
         return clientSocket;
     }
 
+// Проверяет, подключён ли оператор
     bool hasClient() const
     {
         return clientSocket >= 0;
     }
 
-    // Принимает новое подключение на уже готовом (select() это
-    // подтвердил) слушающем сокете. Если в этот момент уже был
-    // подключён предыдущий клиент, он сначала отключается.
+// Принимает новое подключение на уже готовом слушающем сокете. Если в этот момент уже был подключён предыдущий клиент, он сначала отключается
     bool acceptClient(std::string& acceptedFromAddress)
     {
         sockaddr_in clientAddress{};
@@ -421,6 +435,7 @@ public:
         return true;
     }
 
+// Получает данные от оператора
     ssize_t receiveData(
         char* buffer,
         size_t bufferSize
@@ -439,7 +454,7 @@ public:
         );
     }
 
-    // Отправка телеметрии от платы робота обратно оператору на ПК.
+    // Отправка телеметрии от платы робота обратно оператору на ПК
     bool sendData(const char* data, size_t length)
     {
         if (clientSocket < 0)
@@ -469,6 +484,7 @@ public:
         return true;
     }
 
+// Закрывает подключение оператора
     void closeClient()
     {
         if (clientSocket >= 0)
@@ -478,6 +494,7 @@ public:
         }
     }
 
+// Закрывает TCP-сервер и подключение оператора
     void closeServer()
     {
         closeClient();
@@ -489,12 +506,14 @@ public:
         }
     }
 
+// Закрывает сетевые сокеты при уничтожении объекта
     ~NetworkController()
     {
         closeServer();
     }
 
 private:
+// Разрешает повторное использование адреса TCP-сервера
     void enableAddressReuse()
     {
         int enableReuse = 1;
@@ -508,6 +527,7 @@ private:
         );
     }
 
+// Привязывает серверный сокет к указанному порту
     bool bindServerSocket()
     {
         sockaddr_in serverAddress{};
@@ -528,7 +548,7 @@ private:
 
         return true;
     }
-
+// Переводит серверный сокет в режим ожидания подключений
     bool startListening()
     {
         if (listen(
@@ -548,6 +568,7 @@ private:
 class CommandController
 {
 public:
+// Проверяет, является ли команда допустимой
     bool isValidCommand(char command) const
     {
         switch (command)
@@ -603,6 +624,7 @@ public:
     {
     }
 
+// Запускает сервер робота и его основной цикл.
     int run()
     {
         std::cout
@@ -629,6 +651,7 @@ public:
     }
 
 private:
+// Инициализирует Serial и сетевое соединение
     bool initialize()
     {
         if (!serialController.initialize())
@@ -644,7 +667,7 @@ private:
         return true;
     }
 
-    // Единый цикл на всё время жизни процесса: слушающий сокет
+    // Единый цикл на всё время жизни процесса: обрабатывает подключения, команды и телеметрию.
     void mainLoop()
     {
         char commandBuffer[COMMAND_BUFFER_SIZE];
@@ -721,6 +744,7 @@ private:
         }
     }
 
+// Принимает новое подключение и передаёт накопленные данные
     void acceptNewClient()
     {
         std::string fromAddress;
@@ -740,6 +764,7 @@ private:
         publishEvent("PC подключён: " + fromAddress);
     }
 
+// Передаёт оператору накопленные события
     void replayEventHistory()
     {
         if (!networkController.hasClient() || eventHistory.empty())
@@ -759,6 +784,7 @@ private:
         }
     }
 
+// Записывает событие и отправляет его оператору
     void publishEvent(const std::string& message)
     {
         const std::string eventTimestamp = logger.writeEvent(message);
@@ -777,7 +803,7 @@ private:
             );
         }
     }
-
+// Передаёт оператору накопленную телеметрию
     void replayTelemetryHistory()
     {
         if (!networkController.hasClient() || telemetryHistory.empty())
@@ -824,6 +850,7 @@ private:
         return true;
     }
 
+// Проверяет полученные команды и передаёт их роботу
     void processReceivedCommands(
         const char* commandBuffer,
         ssize_t bytesReceived
@@ -850,7 +877,7 @@ private:
             }
         }
     }
-
+// Отправляет команду управления на плату
     void sendRobotCommand(char command)
     {
         if (
