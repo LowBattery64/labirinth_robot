@@ -49,6 +49,7 @@ const int DEFAULT_DRIVE_SPEED = 100;
 class MotorController
 {
 public:
+ // Инициализирует управление моторами
     void begin()
     {
         pinMode(Pins::M1_DIR, OUTPUT);
@@ -60,16 +61,19 @@ public:
         stop();
     }
 
+    // Устанавливает скорость левого мотора
     void setLeft(int speed)
     {
         setMotor(Pins::M1_DIR, Pins::M1_SPEED, speed);
     }
 
+    // Устанавливает скорость правого мотора
     void setRight(int speed)
     {
         setMotor(Pins::M2_DIR, Pins::M2_SPEED, speed);
     }
 
+    // Останавливает оба мотора
     void stop()
     {
         setLeft(0);
@@ -129,6 +133,7 @@ public:
         pinMode(echoPin, INPUT);
     }
 
+    // Измеряет расстояние до препятствия в сантиметрах
     long readCm() const
     {
         digitalWrite(trigPin, LOW);
@@ -174,6 +179,7 @@ public:
         right.begin();
     }
 
+    // Считывает расстояния со всех ультразвуковых датчиков
     void readAll(long &centerCm, long &leftCm, long &rightCm) const
     {
         centerCm = center.readCm();
@@ -229,6 +235,7 @@ public:
             digitalRead(Pins::ENCODER_RIGHT) == HIGH;
     }
 
+   // Обновляет счётчики импульсов энкодеров
     void poll()
     {
         bool leftState =
@@ -252,6 +259,7 @@ public:
         lastRightState = rightState;
     }
 
+    // Возвращает число импульсов левого энкодера
     unsigned long leftPulseCount() const
     {
         return leftPulses;
@@ -262,6 +270,7 @@ public:
         return rightPulses;
     }
 
+    // Сбрасывает счётчики энкодеров
     void resetCounters()
     {
         leftPulses = 0;
@@ -287,6 +296,7 @@ private:
     TrackingCamDxlUart cam;
 
 public:
+    // Инициализирует TrackingCam.
     void begin()
     {
         cam.init(
@@ -297,6 +307,7 @@ public:
         );
     }
 
+    // Считывает обнаруженные камерой объекты
     uint8_t readObjects()
     {
         return cam.readObjects(MAX_OBJECTS);
@@ -307,6 +318,7 @@ public:
         return cam.readBlobs(MAX_OBJECTS);
     }
 
+    // Проверяет наличие обнаруженного объекта
     bool hasObject() const
     {
         return cam.obj[0].obj_size > 0;
@@ -354,6 +366,7 @@ public:
         update();
     }
 
+    // Периодически обновляет состояние переднего препятствия
     void poll()
     {
         unsigned long now = millis();
@@ -367,12 +380,14 @@ public:
         update();
     }
 
+    // Возвращает состояние передней зоны движения
     bool isForwardBlocked() const
     {
         return obstacleAhead;
     }
 
 private:
+    // Обновляет состояние препятствия по центральному дальномеру
     void update()
     {
         long distanceCm = ultrasonicSensors.readCenterCm();
@@ -416,6 +431,7 @@ public:
     {
     }
 
+   // Добавляет выполненный участок движения в историю
     void push(char command, unsigned long durationMs)
     {
         if (durationMs == 0)
@@ -439,6 +455,7 @@ public:
         count++;
     }
 
+    // Извлекает последний участок пути для обратного движения
     bool popInverse(char &inverseCommand, unsigned long &durationMs)
     {
         if (count == 0)
@@ -464,12 +481,14 @@ public:
         return count;
     }
 
+    // Очищает историю движения
     void clear()
     {
         count = 0;
     }
 
 private:
+    // Возвращает команду, обратную указанному движению
     static char invert(char command)
     {
         switch (command)
@@ -526,12 +545,14 @@ public:
     {
     }
 
+    // Запускает контроль команд и watchdog
     void begin()
     {
         lastCommandMs = millis();
         commandStartMs = millis();
     }
 
+    // Принимает и выполняет команды оператора
     void poll()
     {
         if (!Serial.available())
@@ -594,6 +615,7 @@ public:
         }
     }
 
+    // Останавливает движение вперёд при появлении препятствия
     void safetyPoll()
     {
         if (requestedCommand == 'F' && safety.isForwardBlocked())
@@ -602,6 +624,7 @@ public:
         }
     }
 
+    // Останавливает робота при потере команд от оператора
     void watchdogPoll()
     {
         unsigned long now = millis();
@@ -620,34 +643,39 @@ public:
         }
     }
 
+    // Возвращает текущую команду управления
     char getRequestedCommand() const
     {
         return requestedCommand;
     }
 
+    // Проверяет, сработал ли watchdog
     bool wasStoppedByWatchdog() const
     {
         return watchdogStopped;
     }
 
-    // Сколько миллисекунд прошло с последней команды оператора.
+    // Сколько миллисекунд прошло с последней команды оператора
     // Используется AutonomousReturn, чтобы определить полную потерю связи  и момент, когда оператор снова на связи.
     unsigned long millisSinceLastCommand() const
     {
         return millis() - lastCommandMs;
     }
 
+    // Возвращает историю выполненных движений
     MoveHistory &moveHistory()
     {
         return history;
     }
 
+    // Очищает историю после возврата ручного управления.
     void resetHistoryAfterManualResume()
     {
         history.clear();
     }
 
 private:
+    // Сохраняет завершённый участок движения
     void recordSegment()
     {
         if (requestedCommand != 'S')
@@ -656,6 +684,7 @@ private:
         }
     }
 
+    // Проверяет допустимость команды управления
     bool isValidCommand(char command) const
     {
         switch (command)
@@ -719,6 +748,7 @@ public:
     {
     }
 
+    // Управляет автономным возвратом при потере связи
     void poll()
     {
         bool operatorRecentlyActive =
@@ -755,18 +785,21 @@ public:
         runCurrentSegment();
     }
 
+    // Проверяет, выполняется ли автономный возврат
     bool isActive() const
     {
         return active;
     }
 
 private:
+    // Запускает движение по обратной истории
     void beginReturn()
     {
         active = true;
         advanceToNextSegment();
     }
 
+    // Переходит к следующему участку обратного пути
     void advanceToNextSegment()
     {
         if (!commandProtocol.moveHistory().popInverse(currentCommand, currentDurationMs))
@@ -782,7 +815,7 @@ private:
         segmentStartMs = millis();
         applyCommand(currentCommand);
     }
-
+    // Выполняет текущий участок автономного пути
     void runCurrentSegment()
     {
         if (currentCommand == 'F' && safety.isForwardBlocked())
@@ -799,7 +832,7 @@ private:
             advanceToNextSegment();
         }
     }
-
+    // Применяет команду движения во время автономного возврата
     void applyCommand(char command)
     {
         switch (command)
@@ -862,6 +895,7 @@ const unsigned long TELEMETRY_PERIOD_MS = 200;
 // Телеметрия
 // ============================================================
 
+// Отправляет текущую телеметрию робота оператору
 void sendTelemetry()
 {
     long usCenter;
