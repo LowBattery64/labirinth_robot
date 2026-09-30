@@ -83,7 +83,8 @@ class NanomsgCameraClient:
         self.camera_port = camera_port
         self.reconnect_delay_s = reconnect_delay_s
         self._socket = None
-
+        
+# Получает кадры с камеры и автоматически переподключается
     def frames(self):
         while True:
             try:
@@ -96,7 +97,8 @@ class NanomsgCameraClient:
 
             logger.info("Переподключение через %.1f с...", self.reconnect_delay_s)
             time.sleep(self.reconnect_delay_s)
-
+            
+# Устанавливает соединение с камерой
     def _connect(self):
         import websocket  
 
@@ -110,7 +112,8 @@ class NanomsgCameraClient:
         )
 
         logger.info("Камера подключена.")
-
+        
+# Закрывает соединение с камерой
     def _disconnect(self):
         if self._socket is not None:
             try:
@@ -118,7 +121,8 @@ class NanomsgCameraClient:
             except Exception:
                 pass
             self._socket = None
-
+            
+# Получает сообщения от камеры и извлекает из них кадры
     def _receive_loop(self):
         assert self._socket is not None
 
@@ -166,7 +170,8 @@ class MotorcortexCameraClient:
 
         self._req = None
         self._sub = None
-
+        
+# Сохраняет очередной кадр, полученный от motorcortex
     def _on_image(self, values):
         try:
             jpeg_bytes = bytes(values[0].value)
@@ -185,7 +190,8 @@ class MotorcortexCameraClient:
                 self._frame_queue.put_nowait(jpeg_bytes)
             except queue.Full:
                 pass
-
+                
+# Подключается к камере через motorcortex
     def _connect(self):
         import motorcortex
 
@@ -196,7 +202,7 @@ class MotorcortexCameraClient:
         logger.info("Подключение к камере через motorcortex: %s", url)
 
         # reconnect=True (по умолчанию в библиотеке) - переподключение
-        # при обрыве связи с камерой обрабатывает motorcortex-python.
+        # при обрыве связи с камерой обрабатывает motorcortex-python
         self._req, self._sub = motorcortex.connect(
             url,
             motorcortex_types,
@@ -212,7 +218,7 @@ class MotorcortexCameraClient:
         subscription.notify(self._on_image)
 
         logger.info("Подписка на %s оформлена - видео пойдёт без браузера.", self.image_path)
-
+# Получает кадры из очереди motorcortex
     def frames(self):
         self._connect()
 
@@ -228,7 +234,8 @@ class TcpFrameBroadcaster:
         self._server_socket: Optional[socket.socket] = None
         self._client_socket: Optional[socket.socket] = None
         self._lock = threading.Lock()
-
+        
+# Запускает TCP-сервер для передачи видео оператору
     def start(self):
         self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -239,7 +246,8 @@ class TcpFrameBroadcaster:
 
         thread = threading.Thread(target=self._accept_loop, daemon=True)
         thread.start()
-
+        
+# Принимает подключения от операторского ПК
     def _accept_loop(self):
         assert self._server_socket is not None
 
@@ -258,7 +266,8 @@ class TcpFrameBroadcaster:
                         pass
 
                 self._client_socket = client_socket
-
+                
+# Отправляет JPEG-кадр подключённому оператору
     def broadcast(self, jpeg_frame: bytes) -> bool:
         """Возвращает True, если кадр был отправлен оператору."""
         with self._lock:
@@ -274,7 +283,8 @@ class TcpFrameBroadcaster:
         except (socket.timeout, ConnectionError, OSError):
             self._drop_client(client)
             return False
-
+            
+# Отключает потерянное соединение с оператором
     def _drop_client(self, dead_client: socket.socket):
         with self._lock:
             if self._client_socket is dead_client:
@@ -310,7 +320,8 @@ class ThreadedFrameRecorder:
 
         self._thread = threading.Thread(target=self._writer_loop, daemon=True)
         self._thread.start()
-
+        
+# Добавляет кадр в очередь записи
     def put_frame(self, jpeg_frame: bytes):
         try:
             self._queue.put_nowait(jpeg_frame)
@@ -327,18 +338,20 @@ class ThreadedFrameRecorder:
                 pass
 
             self._dropped_frames += 1
-
+            
+# Возвращает статистику записи кадров
     def stats(self):
         return {
             "written": self._written_frames,
             "dropped": self._dropped_frames,
             "queued": self._queue.qsize(),
         }
-
+        
+# Останавливает поток записи и закрывает файл
     def close(self):
         self._queue.put(None)  # сигнал остановки потоку записи
         self._thread.join(timeout=5.0)
-
+# Записывает кадры из очереди в видеофайл
     def _writer_loop(self):
         import cv2
         import numpy as np
@@ -368,7 +381,7 @@ class ThreadedFrameRecorder:
         if self._writer is not None:
             self._writer.release()
             self._writer = None
-
+# Создаёт новый файл, если текущая запись закончилась
     def _rotate_segment_if_needed(self, cv2, frame_size):
         now = time.time()
         needs_new_segment = (
@@ -407,7 +420,8 @@ class StreamProcessor:
     def __init__(self):
         self._quality = "HIGH"
         self._lock = threading.Lock()
-
+        
+# Устанавливает выбранное качество видеопотока
     def set_quality(self, quality: str) -> bool:
         quality = quality.upper()
         if quality not in self.PROFILES:
@@ -417,11 +431,13 @@ class StreamProcessor:
             self._quality = quality
         logger.info("Качество видеопотока: %s", quality)
         return True
-
+        
+# Возвращает текущее качество видеопотока
     def get_quality(self) -> str:
         with self._lock:
             return self._quality
-
+            
+# Применяет выбранное качество к JPEG-кадру
     def process(self, jpeg_frame: bytes) -> bytes:
         with self._lock:
             quality = self._quality
@@ -469,7 +485,7 @@ class VideoControlServer:
         self.port = port
         self.controller = controller
         self._server_socket: Optional[socket.socket] = None
-
+# Запускает TCP-канал управления видео
     def start(self):
         self._server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -478,7 +494,7 @@ class VideoControlServer:
 
         logger.info("Канал управления видео запущен на порту %d.", self.port)
         threading.Thread(target=self._accept_loop, daemon=True).start()
-
+# Принимает и обрабатывает команды оператора
     def _accept_loop(self):
         assert self._server_socket is not None
 
@@ -491,7 +507,7 @@ class VideoControlServer:
                 args=(client_socket,),
                 daemon=True,
             ).start()
-
+# Обрабатывает команды одного подключения
     def _client_loop(self, client_socket: socket.socket):
         try:
             client_socket.sendall(
@@ -521,7 +537,7 @@ class VideoControlServer:
                 client_socket.close()
             except OSError:
                 pass
-
+# Выполняет команду управления видео
     def _handle_command(self, command: str) -> str:
         parts = command.upper().split()
 
@@ -566,17 +582,21 @@ class VideoController:
         self.fps = fps
         self._recorder: Optional[ThreadedFrameRecorder] = None
         self._recorder_lock = threading.Lock()
-
+        
+# Устанавливает качество видеопотока
     def set_quality(self, quality: str) -> bool:
         return self.stream_processor.set_quality(quality)
-
+        
+# Возвращает текущее качество видеопотока
     def get_quality(self) -> str:
         return self.stream_processor.get_quality()
-
+        
+# Проверяет, идёт ли сейчас запись видео
     def is_recording(self) -> bool:
         with self._recorder_lock:
             return self._recorder is not None
-
+            
+# Запускает запись видео.
     def start_recording(self):
         if self.record_dir is None:
             raise RuntimeError("Папка записи не задана")
@@ -593,7 +613,8 @@ class VideoController:
             )
 
         logger.info("Запись видео запущена: %s", self.record_dir)
-
+        
+# Останавливает запись видео.
     def stop_recording(self):
         with self._recorder_lock:
             recorder = self._recorder
@@ -602,7 +623,8 @@ class VideoController:
         if recorder is not None:
             recorder.close()
             logger.info("Запись видео остановлена.")
-
+            
+# Обрабатывает кадр и передаёт его на запись.
     def process(self, jpeg_frame: bytes) -> bytes:
         processed_frame = self.stream_processor.process(jpeg_frame)
 
@@ -622,7 +644,8 @@ class FpsCounter:
         self.report_period_s = report_period_s
         self._count = 0
         self._window_start = time.monotonic()
-
+        
+# Обновляет счётчик кадров и периодически возвращает FPS.
     def tick(self) -> Optional[float]:
         """Увеличивает счётчик; возвращает FPS, если период истёк, иначе None."""
         self._count += 1
@@ -637,7 +660,7 @@ class FpsCounter:
         self._window_start = now
         return fps
 
-
+# Запускает передачу видео и обработку команд оператора.
 def run(
     camera,
     tcp_port: int,
@@ -683,7 +706,7 @@ def run(
     finally:
         controller.stop_recording()
 
-
+# Запускает camera bridge и выбирает способ подключения к камере.
 def main():
     parser = argparse.ArgumentParser(description="OmegaBot camera bridge")
     parser.add_argument("--camera-ip", required=True, help="IP-адрес камеры")
