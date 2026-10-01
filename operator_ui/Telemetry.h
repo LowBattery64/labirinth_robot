@@ -2,6 +2,7 @@
 
 #include <QString>
 #include <QStringList>
+#include <QDateTime>
 
 struct Telemetry
 {
@@ -32,8 +33,14 @@ inline Telemetry parseTelemetry(const QString& line)
     if (p.size() < 20 || p[0] != "T")
         return result;
 
-    if (p.size() >= 2)
-        result.serverTimestamp = p[1];
+    const QString possibleTimestamp = p.value(1);
+
+    if (QDateTime::fromString(
+            possibleTimestamp,
+            "yyyy-MM-dd HH:mm:ss.zzz"
+        ).isValid()) {
+        result.serverTimestamp = possibleTimestamp;
+    }
 
     auto value = [&](const QString& key, int offset) {
         const int i = p.indexOf(key);
