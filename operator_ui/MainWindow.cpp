@@ -50,7 +50,7 @@ MainWindow::~MainWindow()
 
 void MainWindow::setupUi()
 {
-    setWindowTitle("OmegaBot — Operator Console");
+    setWindowTitle("Гослингмобиль — Drive");
     resize(1280, 800);
     setMinimumSize(1000, 650);
 
@@ -60,7 +60,7 @@ void MainWindow::setupUi()
     root->setSpacing(12);
 
     auto* header = new QHBoxLayout;
-    auto* title = new QLabel("Ω OMEGABOT");
+    auto* title = new QLabel("Гослингмобиль");
     title->setObjectName("title");
     header->addWidget(title);
     header->addStretch();
@@ -86,7 +86,7 @@ void MainWindow::setupUi()
     controlFrame->setObjectName("panel");
     auto* controlLayout = new QVBoxLayout(controlFrame);
 
-    auto* controlTitle = new QLabel("УПРАВЛЕНИЕ");
+    auto* controlTitle = new QLabel("Drive");
     controlTitle->setObjectName("panelTitle");
     controlLayout->addWidget(controlTitle, 0, Qt::AlignCenter);
 
@@ -117,7 +117,7 @@ void MainWindow::setupUi()
     rammingButton->setMinimumHeight(44);
     controlLayout->addWidget(rammingButton);
 
-    armButton = new QPushButton("ВООРУЖИТЬ АВТО-ВОЗВРАТ");
+    armButton = new QPushButton("ВКЛЮЧИТЬ АВТО-ВОЗВРАТ");
     armButton->setObjectName("armButton");
     armButton->setMinimumHeight(44);
     controlLayout->addWidget(armButton);
@@ -197,7 +197,7 @@ void MainWindow::setupUi()
 
     connect(armButton, &QPushButton::clicked, this, [this] {
         robot.armAutoReturn();
-        appendLog("Авто-возврат вооружён: при потере связи робот сам вернётся в зону связи");
+        appendLog("Авто-возврат включён: при потере связи робот сам вернётся в зону связи");
     });
 
     for (auto* button : controlFrame->findChildren<QPushButton*>()) {
@@ -300,8 +300,7 @@ void MainWindow::updateTelemetry(const Telemetry& telemetry)
     rammingButton->blockSignals(false);
     rammingButton->setText(telemetry.rammingEnabled ? "ТАРАН: ВКЛ" : "ТАРАН: ВЫКЛ");
 
-    // Пока манёвр уже идёт (или уже вооружён и ждёт потери связи) -
-    // повторное нажатие "Вооружить" не нужно и только сбивает с толку.
+    // Пока авто-возврат уже активирован, повторное включение не требуется.
     armButton->setEnabled(telemetry.mode == "TELEOP" && !telemetry.armedForReturn);
 
     if (telemetry.watchdog)
