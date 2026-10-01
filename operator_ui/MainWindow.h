@@ -1,21 +1,28 @@
 #pragma once
+
 #include <QMainWindow>
 #include <QLabel>
 #include <QTextEdit>
+#include <QComboBox>
 #include <QPushButton>
 #include <QKeyEvent>
+
 #include "RobotConnection.h"
 #include "VideoConnection.h"
+#include "OperatorLogger.h"
 
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
+
 public:
     explicit MainWindow(QWidget* parent = nullptr);
     ~MainWindow() override;
+
 protected:
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
+
 private:
     void setupUi();
     void setupConnections();
@@ -31,9 +38,19 @@ private:
     QLabel* distanceStatus = nullptr;
     QLabel* videoStats = nullptr;
     QLabel* autoReturnStatus = nullptr;
+    QLabel* recordingStatus = nullptr;
+
+    QComboBox* qualitySelector = nullptr;
+
+    QPushButton* recordButton = nullptr;
     QPushButton* rammingButton = nullptr;
     QPushButton* armButton = nullptr;
+
     QTextEdit* logView = nullptr;
+
     RobotConnection robot;
     VideoConnection video;
+    OperatorLogger logger;
+
+    bool watchdogActive = false;
 };
