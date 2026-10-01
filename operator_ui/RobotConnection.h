@@ -1,96 +1,44 @@
-#include "RobotConnection.h"
+#pragma once
+#include <QObject>
+#include <QTcpSocket>
+#include <QTimer>
+#include "Telemetry.h"
 
-RobotConnection::RobotConnection(QObject* parent) : QObject(parent)
+class RobotConnection : public QObject
 {
-    connect(&socket, &QTcpSocket::readyRead, this, &RobotConnection::onReadyRead);
-    connect(&socket, &QTcpSocket::connected, this, [this] {
-        emit connectionChanged(true);
-        sendCurrentCommand();
-    });
-    connect(&socket, &QTcpSocket::disconnected, this, [this] {
-        currentCommand = 'S';
-        emit connectionChanged(false);
-    });
-    connect(&socket, &QTcpSocket::errorOccurred, this, [this](QAbstractSocket::SocketError) {
-        emit errorOccurred(socket.errorString());
-    });
+    Q_OBJECT
 
-    commandTimer.setInterval(100);
-    connect(&commandTimer, &QTimer::timeout, this, &RobotConnection::sendCurrentCommand);
-}
+public:
+    explicit RobotConnection(QObject* parent = nullptr);
 
-void RobotConnection::connectToRobot(const QString& address, quint16 port)
-{
-    socket.abort();
-    socket.connectToHost(address, port);
-    commandTimer.start();
-}
+    void connectToRobot(const QString& address, quint16 port = 5000);
+    void disconnectFromRobot();
+    void setCommand(QChar command);
+    void stop();
 
-void RobotConnection::disconnectFromRobot()
-{
-    stop();
-    commandTimer.stop();
-    socket.disconnectFromHost();
-}
+    // Одноразовые управляющие команды - в отличие от setCommand()
+    // они НЕ занимают currentCommand и не переотправляются таймером
+    // каждые 100мс (это сломало бы обычное движение: currentCommand -
+    // это то, что сейчас непрерывно крутит моторы). Каждая отправляет
+    // единственный байт сразу, один раз за клик/переключение.
+    void armAutoReturn();      // 'A' - вооружить авто-возврат при потере связи
+    void disarmAutoReturn();   // 'a' - снять вооружение вручную
+    void setRammingEnabled(bool enabled); // 'X'/'x' - таран вкл/выкл
 
-void RobotConnection::setCommand(QChar command)
-{
-    currentCommand = command;
-    sendCurrentCommand();
-}
+signals:
+    void connectionChanged(bool connected);
+    void telemetryUpdated(const Telemetry& telemetry);
+    void errorOccurred(const QString& message);
 
-void RobotConnection::stop()
-{
-    currentCommand = 'S';
-    sendCurrentCommand();
-}
+private slots:
+    void onReadyRead();
+    void sendCurrentCommand();
 
-void RobotConnection::armAutoReturn()
-{
-    sendControlByte('A');
-}
+private:
+    void sendControlByte(char byte);
 
-void RobotConnection::disarmAutoReturn()
-{
-    sendControlByte('a');
-}
-
-void RobotConnection::setRammingEnabled(bool enabled)
-{
-    sendControlByte(enabled ? 'X' : 'x');
-}
-
-void RobotConnection::sendControlByte(char byte)
-{
-    if (socket.state() != QAbstractSocket::ConnectedState)
-        return;
-
-    socket.write(QByteArray(1, byte));
-}
-
-void RobotConnection::sendCurrentCommand()
-{
-    if (socket.state() != QAbstractSocket::ConnectedState)
-        return;
-
-    socket.write(QByteArray(1, currentCommand.toLatin1()));
-    socket.write("\n");
-}
-
-void RobotConnection::onReadyRead()
-{
-    receiveBuffer += socket.readAll();
-
-    while (true) {
-        const int newline = receiveBuffer.indexOf('\n');
-        if (newline < 0)
-            break;
-
-        const QByteArray line = receiveBuffer.left(newline).trimmed();
-        receiveBuffer.remove(0, newline + 1);
-
-        const Telemetry telemetry = parseTelemetry(QString::fromLatin1(line));
-        if (telemetry.valid)
-            emit telemetryUpdated(telemetry);
-    }
-}
+    QTcpSocket socket;
+    QTimer commandTimer;
+    QByteArray receiveBuffer;
+    QChar currentCommand = 'S';
+};
