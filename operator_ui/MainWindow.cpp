@@ -139,11 +139,13 @@ void MainWindow::setupUi()
 
     auto* videoToolbar = new QFrame;
     videoToolbar->setObjectName("videoToolbar");
+    videoToolbar->setMinimumHeight(58);
 
     auto* videoToolbarLayout = new QHBoxLayout(videoToolbar);
     videoToolbarLayout->setContentsMargins(12, 8, 12, 8);
+    videoToolbarLayout->setSpacing(10);
 
-    auto* qualityCaption = new QLabel("КАЧЕСТВО");
+    auto* qualityCaption = new QLabel("КАЧЕСТВО ВИДЕО:");
     qualityCaption->setObjectName("toolbarCaption");
     videoToolbarLayout->addWidget(qualityCaption);
 
@@ -152,10 +154,11 @@ void MainWindow::setupUi()
     qualitySelector->addItem("СРЕДНЕЕ", "MEDIUM");
     qualitySelector->addItem("НИЗКОЕ", "LOW");
     qualitySelector->setCurrentIndex(0);
-    qualitySelector->setMinimumWidth(140);
+    qualitySelector->setMinimumWidth(150);
+    qualitySelector->setMinimumHeight(38);
     videoToolbarLayout->addWidget(qualitySelector);
 
-    videoToolbarLayout->addSpacing(12);
+    videoToolbarLayout->addSpacing(16);
 
     recordingStatus = new QLabel("● НЕ ЗАПИСЫВАЕТСЯ");
     recordingStatus->setObjectName("recordOff");
@@ -164,7 +167,7 @@ void MainWindow::setupUi()
     recordButton = new QPushButton("●  НАЧАТЬ ЗАПИСЬ");
     recordButton->setObjectName("recordButton");
     recordButton->setCheckable(true);
-    recordButton->setMinimumHeight(38);
+    recordButton->setMinimumSize(190, 38);
     videoToolbarLayout->addWidget(recordButton);
 
     videoToolbarLayout->addStretch();
