@@ -552,17 +552,18 @@ private:
     // только в ветке "command != requestedCommand" ниже - то есть ни
     // повторная присылка той же "липкой" команды, ни автоостановка
     // по watchdog'у, ни forceStopForAutonomy() его не трогают).
-    // ScoutReturn сверяет его, чтобы понять, что во время кругового
+    // ScoutReturn сверяет его, чтобы понять, что во время миссияового
     // осмотра оператор прислал НОВУЮ команду движения и забрал
     // управление на себя.
     unsigned long movementCommandSeq;
 
-    // Одноразовые флаги от кнопки кругового осмотра ('A' - запустить,
+    // Одноразовые флаги от кнопки автономной миссии обследования ('A' - запустить,
     // 'a' - отменить). "Одноразовые" - значит ScoutReturn обязан их
-    // "забрать" через consumeCircleRequest()/consumeCancelRequest(),
+    // "забрать" через consumeInspectionRequest()/consumeCancelRequest(),
     // иначе запрос запустится/отменится повторно на следующем poll().
-    bool circleRequested;
+    bool inspectionRequested;
     bool cancelRequested;
+    bool autonomyActive;
 
 public:
     CommandProtocol(
@@ -576,8 +577,9 @@ public:
           requestedCommand('S'),
           watchdogStopped(false),
           movementCommandSeq(0),
-          circleRequested(false),
-          cancelRequested(false)
+          inspectionRequested(false),
+          cancelRequested(false),
+          autonomyActive(false)
     {
     }
 
@@ -609,7 +611,7 @@ public:
 
         if (isControlCommand(command))
         {
-            // Управляющие байты (запуск/отмена кругового осмотра,
+            // Управляющие байты (запуск/отмена автономной миссии обследования,
             // включить/выключить таран) - это не команды движения:
             // они не идут в requestedCommand/историю и не трогают
             // моторы напрямую.
@@ -681,6 +683,7 @@ public:
 
         if (
             requestedCommand != 'S' &&
+            !autonomyActive &&
             now - lastCommandMs > COMMAND_TIMEOUT_MS
         )
         {
@@ -736,24 +739,24 @@ public:
         return movementCommandSeq;
     }
 
-    // "Забрать" одноразовый запрос на запуск кругового осмотра
+    // "Забрать" одноразовый запрос на запуск автономной миссии обследования
     // (байт 'A'). Возвращает true один раз - при повторном вызове,
     // пока новая 'A' не придёт, вернёт false.
-    bool consumeCircleRequest()
+    bool consumeInspectionRequest()
     {
-        if (!circleRequested)
+        if (!inspectionRequested)
         {
             return false;
         }
 
-        circleRequested = false;
+        inspectionRequested = false;
         return true;
     }
 
-    // "Забрать" одноразовый запрос на отмену кругового осмотра
+    // "Забрать" одноразовый запрос на отмену автономной миссии обследования
     // (байт 'a'). Если осмотр сейчас не выполняется, ScoutReturn его
     // просто не вызывает, и флаг остаётся как есть до следующего
-    // запуска круга, где он сбрасывается явно (см. beginCircle()).
+    // запуска миссии, где он сбрасывается явно (см. beginCircle()).
     bool consumeCancelRequest()
     {
         if (!cancelRequested)
@@ -766,7 +769,7 @@ public:
     }
 
     // Сбросить флаг отмены, не "забирая" его как настоящую отмену -
-    // нужно перед стартом нового круга, чтобы случайно не зависший
+    // нужно перед стартом нового миссии, чтобы случайно не зависший
     // с прошлого раза флаг не оборвал его немедленно.
     void discardPendingCancelRequest()
     {
@@ -782,6 +785,11 @@ public:
     {
         requestedCommand = 'S';
         motors.stop();
+    }
+
+    void setAutonomyActive(bool active)
+    {
+        autonomyActive = active;
     }
 
 private:
@@ -813,7 +821,10 @@ private:
         switch (command)
         {
         case 'A':
-            circleRequested = true;
+            if (!autonomyActive)
+            {
+                inspectionRequested = true;
+            }
             break;
 
         case 'a':
@@ -856,32 +867,19 @@ private:
 // Автономное поведение
 // ============================================================
 //
-// Два независимых автономных манёвра, не мешающих друг другу:
+// Есть два независимых режима:
 //
-//   1) ИСТОРИЯ ХОДА (HISTORY, раньше - AutonomousReturn). Включается
-//      АВТОМАТИЧЕСКИ, когда оператор не присылал ни одной команды
-//      дольше LOST_SIGNAL_MS (настоящая потеря связи) - старое
-//      поведение "вернуться туда, откуда приехали", посегментно
-//      отыгрывая MoveHistory в обратном порядке (инвертируя каждую
-//      команду: F<->B, L<->R). Прерывается немедленно, как только
-//      оператор снова на связи - манёвр не доигрывается до конца,
-//      просто отдаёт управление обратно. Точка восстановления связи
-//      становится новой "зоной связи" - история пути обнуляется,
-//      чтобы при следующей потере связи робот не пытался проехать
-//      тот же путь заново.
+//   1) HISTORY - старый автоматический возврат по истории движения после
+//      потери связи. Он сохраняется для совместимости с предыдущим
+//      поведением робота.
 //
-//   2) КРУГОВОЙ ОСМОТР (CIRCLE). Запускается НЕМЕДЛЕННО нажатием
-//      кнопки в интерфейсе (байт 'A') - НЕЗАВИСИМО от того, есть
-//      сейчас связь с оператором или нет. Робот проезжает полный
-//      круг (360°) и возвращается туда, откуда начал манёвр (видео
-//      при этом продолжает писаться, как и всегда - запись идёт на
-//      Pi независимо от связи с оператором). В отличие от HISTORY,
-//      сам факт "оператор на связи" круг НЕ прерывает - оператор мог
-//      быть на связи всё это время, в этом и смысл кнопки. Прерывают
-//      его только: 1) НОВАЯ команда движения оператора (взял
-//      управление на себя) или 2) явная отмена той же кнопкой (байт
-//      'a'). Препятствие впереди - не отмена, а пауза: круг стоит и
-//      ждёт, иначе робот не вернётся точно в начальную точку.
+//   2) INSPECTION - явная команда A из интерфейса. Робот проезжает
+//      примерно 10 см вперёд, разворачивается примерно на 180 градусов
+//      на месте и возвращается примерно на те же 10 см. Потеря связи
+//      во время этой миссии не останавливает робота: она ожидаема.
+//      Переднее движение при этом по-прежнему ограничивается УЗ-защитой.
+//      Команда a отменяет миссию. Новая команда движения оператора также
+//      немедленно возвращает управление оператору.
 // ============================================================
 
 class ScoutReturn
@@ -889,19 +887,20 @@ class ScoutReturn
 private:
     static const unsigned long LOST_SIGNAL_MS = 3000;
 
-    // ВАЖНО: ориентировочные значения. Подберите на реальном роботе -
-    // при разнице скоростей колёс DEFAULT_DRIVE_SPEED/CIRCLE_INNER_SPEED
-    // засеките секундомером, сколько миллисекунд нужно, чтобы робот
-    // проехал ровно полный круг (360°) и вернулся в точку старта, и
-    // подставьте сюда. CIRCLE_INNER_SPEED задаёт "крутизну" дуги -
-    // чем он меньше относительно DEFAULT_DRIVE_SPEED, тем круг уже.
-    static const int CIRCLE_INNER_SPEED = DEFAULT_DRIVE_SPEED / 2;
-    static const unsigned long CIRCLE_360_MS = 20000;
+    // Ориентировочная последовательность обследования тупика.
+    // Это не точные значения расстояния/угла: движение выполняется
+    // ограниченное время, а передний УЗ-датчик при необходимости
+    // остановит робота раньше.
+    static const unsigned long INSPECTION_FORWARD_MS = 700;
+    static const unsigned long INSPECTION_TURN_MS = 950;
+    static const unsigned long INSPECTION_BACK_MS = 700;
 
     enum State : uint8_t
     {
         WAITING,
-        CIRCLE,
+        INSPECTION_FORWARD,
+        INSPECTION_TURN,
+        INSPECTION_BACK,
         HISTORY
     };
 
@@ -911,17 +910,10 @@ private:
 
     State state;
     unsigned long phaseStartMs;
+    unsigned long inspectionStartSeq;
 
-    // Снимок movementCommandSequence() на момент старта круга и
-    // накопленное "чистое" (без пауз на препятствии) время круга -
-    // используются только в состоянии CIRCLE.
-    unsigned long circleStartSeq;
-    unsigned long circleElapsedMs;
-    unsigned long lastCirclePollMs;
-
-    // Текущий отыгрываемый (уже инвертированный) отрезок истории
-    // хода и его длительность - используются только в состоянии
-    // HISTORY.
+    // Текущий отыгрываемый (инвертированный) отрезок истории
+    // хода и его длительность - используются только в HISTORY.
     char historyCommand;
     unsigned long historySegmentMs;
 
@@ -936,9 +928,7 @@ public:
           commandProtocol(protocol),
           state(WAITING),
           phaseStartMs(0),
-          circleStartSeq(0),
-          circleElapsedMs(0),
-          lastCirclePollMs(0),
+          inspectionStartSeq(0),
           historyCommand('S'),
           historySegmentMs(0)
     {
@@ -946,28 +936,27 @@ public:
 
     void poll()
     {
-        if (state == CIRCLE)
+        if (state == INSPECTION_FORWARD ||
+            state == INSPECTION_TURN ||
+            state == INSPECTION_BACK)
         {
-            if (commandProtocol.movementCommandSequence() != circleStartSeq)
+            if (commandProtocol.movementCommandSequence() != inspectionStartSeq)
             {
-                // Оператор прислал НОВУЮ команду движения - в этой же
-                // итерации loop() CommandProtocol::poll() уже применил
-                // её к моторам, поэтому здесь моторы не трогаем, просто
-                // прекращаем манёвр.
-                state = WAITING;
+                // Новая команда движения от оператора означает, что он
+                // забрал управление. Команда уже применена в
+                // CommandProtocol::poll(), поэтому здесь просто
+                // завершаем автономную миссию и не трогаем моторы.
+                finishInspection(false);
                 return;
             }
 
             if (commandProtocol.consumeCancelRequest())
             {
-                // Явная отмена кнопкой - никто управление не
-                // перехватывал, поэтому останавливаем моторы сами.
-                motors.stop();
-                state = WAITING;
+                finishInspection(true);
                 return;
             }
 
-            runCircle();
+            runInspection();
             return;
         }
 
@@ -976,13 +965,14 @@ public:
 
         if (state == WAITING)
         {
-            if (commandProtocol.consumeCircleRequest())
+            if (commandProtocol.consumeInspectionRequest())
             {
-                // Круговой осмотр - НЕЗАВИСИМо от связи с оператором.
-                beginCircle();
+                beginInspection();
                 return;
             }
 
+            // Старое автоматическое возвращение по истории сохраняется.
+            // Оно срабатывает только при настоящей потере связи.
             if (!operatorRecentlyActive && !commandProtocol.moveHistory().isEmpty())
             {
                 beginHistory();
@@ -994,11 +984,10 @@ public:
         // state == HISTORY
         if (operatorRecentlyActive)
         {
-            // Оператор снова на связи посреди манёвра. Моторы здесь не
-            // трогаем по той же причине, что и для CIRCLE выше. Точка
-            // восстановления связи - новая "зона связи", поэтому
-            // стираем историю пути.
+            // Оператор снова на связи: прекращаем автономный возврат и
+            // начинаем новую историю движения с текущей точки.
             commandProtocol.resetHistoryAfterManualResume();
+            commandProtocol.setAutonomyActive(false);
             state = WAITING;
             return;
         }
@@ -1011,21 +1000,25 @@ public:
         return state != WAITING;
     }
 
-    // Используется только для телеметрии (поле ARMED) - чтобы кнопка в
-    // интерфейсе оставалась "нажатой" ровно пока круг реально выполняется,
-    // и сама отпускалась по завершении/отмене/перехвату, без каких-либо
-    // изменений в самом интерфейсе.
-    bool isCircleActive() const
+    bool isInspectionActive() const
     {
-        return state == CIRCLE;
+        return state == INSPECTION_FORWARD ||
+               state == INSPECTION_TURN ||
+               state == INSPECTION_BACK;
     }
 
     const char *stateName() const
     {
         switch (state)
         {
-        case CIRCLE:
-            return "CIRCLE";
+        case INSPECTION_FORWARD:
+            return "INSPECT_IN";
+
+        case INSPECTION_TURN:
+            return "INSPECT_TURN";
+
+        case INSPECTION_BACK:
+            return "INSPECT_OUT";
 
         case HISTORY:
             return "HISTORY";
@@ -1036,64 +1029,124 @@ public:
     }
 
 private:
-    void beginCircle()
+    void beginInspection()
     {
-        // Сбрасываем возможную "зависшую" отмену с прошлого круга,
-        // чтобы она не оборвала этот немедленно.
+        // Команда A сама по себе считается командой оператора, поэтому
+        // watchdog уже получил свежий timestamp. После старта миссии
+        // watchdog временно не должен останавливать робота: потеря связи
+        // внутри тупика является ожидаемой частью задания.
         commandProtocol.discardPendingCancelRequest();
         commandProtocol.forceStopForAutonomy();
+        commandProtocol.setAutonomyActive(true);
+        inspectionStartSeq = commandProtocol.movementCommandSequence();
 
-        circleStartSeq = commandProtocol.movementCommandSequence();
-        circleElapsedMs = 0;
-        lastCirclePollMs = millis();
+        phaseStartMs = millis();
+        state = INSPECTION_FORWARD;
 
-        state = CIRCLE;
-        driveCircle();
+        driveForward();
     }
 
-    void runCircle()
+    void runInspection()
     {
-        unsigned long now = millis();
-        unsigned long delta = now - lastCirclePollMs;
-        lastCirclePollMs = now;
+        switch (state)
+        {
+        case INSPECTION_FORWARD:
+            runForwardPhase();
+            break;
 
+        case INSPECTION_TURN:
+            runTurnPhase();
+            break;
+
+        case INSPECTION_BACK:
+            runBackPhase();
+            break;
+
+        default:
+            break;
+        }
+    }
+
+    void runForwardPhase()
+    {
+        // Если перед роботом препятствие, УЗ-защита останавливает его.
+        // Фаза не завершается, пока препятствие не исчезнет или не
+        // закончится отведённое время.
         if (safety.isForwardBlocked())
         {
-            // Пауза, а не отмена - время, проведённое в ожидании,
-            // не засчитывается в пройденный круг, иначе манёвр
-            // закончится раньше, чем робот реально проедет круг.
             motors.stop();
         }
         else
         {
-            driveCircle();
-            circleElapsedMs += delta;
+            driveForward();
         }
 
-        if (circleElapsedMs >= CIRCLE_360_MS)
+        if (millis() - phaseStartMs >= INSPECTION_FORWARD_MS)
         {
-            finishCircle();
+            motors.stop();
+            phaseStartMs = millis();
+            state = INSPECTION_TURN;
+            driveTurn();
         }
     }
 
-    void finishCircle()
+    void runTurnPhase()
     {
-        motors.stop();
+        // Разворот выполняется на месте. Передний УЗ-датчик здесь не
+        // блокирует движение: робот не едет вперёд, а разворачивается.
+        driveTurn();
+
+        if (millis() - phaseStartMs >= INSPECTION_TURN_MS)
+        {
+            motors.stop();
+            phaseStartMs = millis();
+            state = INSPECTION_BACK;
+            driveBackward();
+        }
+    }
+
+    void runBackPhase()
+    {
+        driveBackward();
+
+        if (millis() - phaseStartMs >= INSPECTION_BACK_MS)
+        {
+            finishInspection(true);
+        }
+    }
+
+    void finishInspection(bool stopMotors)
+    {
+        if (stopMotors)
+        {
+            motors.stop();
+        }
+
+        commandProtocol.setAutonomyActive(false);
+        commandProtocol.resetHistoryAfterManualResume();
         state = WAITING;
     }
 
-    void driveCircle()
+    void driveForward()
     {
-        // Тот же знак, что и у обычного "вперёд" (см. driveHistoryCommand
-        // для 'F'), но с разными скоростями колёс - вместо прямой робот
-        // едет по дуге и за CIRCLE_360_MS успевает описать полный круг.
         motors.setLeft(DEFAULT_DRIVE_SPEED);
-        motors.setRight(-CIRCLE_INNER_SPEED);
+        motors.setRight(-DEFAULT_DRIVE_SPEED);
     }
 
-    // Снимает с истории хода самый свежий отрезок (уже инвертированный -
-    // F<->B, L<->R), начинает его отыгрывать. Возвращает false, если
-    // история уже пуста - тогда возврат по истории завершён/невозможен.
+    void driveBackward()
+    {
+        motors.setLeft(-DEFAULT_DRIVE_SPEED);
+        motors.setRight(DEFAULT_DRIVE_SPEED);
+    }
+
+    void driveTurn()
+    {
+        // Обе стороны вращаются в одну сторону относительно колёс,
+        // поэтому робот разворачивается примерно на месте.
+        motors.setLeft(DEFAULT_DRIVE_SPEED);
+        motors.setRight(DEFAULT_DRIVE_SPEED);
+    }
+
     bool popNextHistorySegment()
     {
         char command;
@@ -1116,19 +1169,15 @@ private:
     {
         if (!popNextHistorySegment())
         {
-            // История опустела ровно к моменту потери связи -
-            // отыгрывать нечего, остаёмся в ожидании.
             return;
         }
 
+        commandProtocol.setAutonomyActive(true);
         state = HISTORY;
     }
 
     void runHistory()
     {
-        // Едущий вперёд инвертированный отрезок ('F') уважает
-        // УЗ-защиту/таран как обычное движение. Остальные инверсии
-        // ('B'/'L'/'R') - как и раньше, без переднего дальномера.
         if (historyCommand == 'F' && safety.isForwardBlocked())
         {
             motors.stop();
@@ -1143,6 +1192,7 @@ private:
             if (!popNextHistorySegment())
             {
                 motors.stop();
+                commandProtocol.setAutonomyActive(false);
                 state = WAITING;
             }
         }
@@ -1177,7 +1227,6 @@ private:
             break;
         }
     }
-
 };
 
 
@@ -1244,11 +1293,11 @@ void sendTelemetry()
 
     // Поле ARMED сохранено ради совместимости с интерфейсом (который мы
     // по просьбе Юли не трогаем): смысла "вооружён и ждёт потери связи"
-    // больше нет (кнопка запускает круг немедленно), но само поле по-
-    // прежнему "true", пока круговой осмотр реально выполняется - это и
+    // больше нет (кнопка запускает автономная миссия немедленно), но само поле по-
+    // прежнему "true", пока автономная миссия обследования реально выполняется - это и
     // держит кнопку в интерфейсе нажатой ровно на время манёвра.
     Serial.print(",ARMED,");
-    Serial.print(scoutReturn.isCircleActive());
+    Serial.print(scoutReturn.isInspectionActive());
 
     Serial.print(",MODE,");
     Serial.print(scoutReturn.stateName());
