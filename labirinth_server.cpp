@@ -215,16 +215,35 @@ public:
 // Отправляет одну команду на плату робота
     bool sendCommand(char command)
     {
+        return sendData(&command, 1);
+    }
+
+    bool sendData(const char* data, size_t length)
+    {
         if (serialFileDescriptor < 0)
         {
             return false;
         }
 
-        return write(
-            serialFileDescriptor,
-            &command,
-            1
-        ) == 1;
+        size_t totalWritten = 0;
+
+        while (totalWritten < length)
+        {
+            ssize_t written = write(
+                serialFileDescriptor,
+                data + totalWritten,
+                length - totalWritten
+            );
+
+            if (written <= 0)
+            {
+                return false;
+            }
+
+            totalWritten += static_cast<size_t>(written);
+        }
+
+        return true;
     }
 
 // Читает данные от платы и передаёт готовые строки обработчику
@@ -575,8 +594,7 @@ private:
 class CommandController
 {
 public:
-// Проверяет, является ли команда допустимой (движение F/B/L/R/S,
-// либо управляющие A/a - авто-возврат, X/x - таран)
+// Проверяет допустимые одиночные команды.
     bool isValidCommand(char command) const
     {
         switch (command)
@@ -586,8 +604,6 @@ public:
             case 'L':
             case 'R':
             case 'S':
-            case 'A':
-            case 'a':
             case 'X':
             case 'x':
                 return true;
@@ -595,6 +611,39 @@ public:
             default:
                 return false;
         }
+    }
+
+    bool isValidPacket(const std::string& packet) const
+    {
+        if (packet.size() < 4 || packet.rfind("P,", 0) != 0)
+            return false;
+
+        if (packet.size() > 150)
+            return false;
+
+        for (size_t i = 2; i < packet.size(); ++i)
+        {
+            const char character = packet[i];
+
+            if (
+                character == 'F' ||
+                character == 'B' ||
+                character == 'L' ||
+                character == 'R' ||
+                character == 'S' ||
+                character == ':' ||
+                character == ';' ||
+                character == ',' ||
+                (character >= '0' && character <= '9')
+            )
+            {
+                continue;
+            }
+
+            return false;
+        }
+
+        return true;
     }
 };
 
@@ -617,6 +666,8 @@ private:
     NetworkController networkController;
 
     SerialController serialController;
+
+    std::string networkCommandBuffer;
 
     CommandController commandController;
     RobotLogger logger;
@@ -862,34 +913,65 @@ private:
         return true;
     }
 
-// Проверяет полученные команды и передаёт их роботу
+// Собирает TCP-поток в строки и передаёт на Arduino
+    // одиночные команды или пользовательские пакеты.
     void processReceivedCommands(
         const char* commandBuffer,
         ssize_t bytesReceived
     )
     {
-        for (
-            ssize_t commandIndex = 0;
-            commandIndex < bytesReceived;
-            commandIndex++
-        )
-        {
-            char receivedCommand =
-                commandBuffer[commandIndex];
+        networkCommandBuffer.append(
+            commandBuffer,
+            static_cast<size_t>(bytesReceived)
+        );
 
-            if (
-                commandController.isValidCommand(
-                    receivedCommand
-                )
+        while (true)
+        {
+            const size_t newlinePosition =
+                networkCommandBuffer.find('\\n');
+
+            if (newlinePosition == std::string::npos)
+            {
+                if (networkCommandBuffer.size() > COMMAND_BUFFER_SIZE * 4)
+                    networkCommandBuffer.clear();
+
+                return;
+            }
+
+            std::string commandLine =
+                networkCommandBuffer.substr(0, newlinePosition);
+
+            networkCommandBuffer.erase(
+                0,
+                newlinePosition + 1
+            );
+
+            while (
+                !commandLine.empty() &&
+                (commandLine.back() == '\\r' || commandLine.back() == ' ')
             )
             {
-                sendRobotCommand(
-                    receivedCommand
-                );
+                commandLine.pop_back();
+            }
+
+            if (commandLine.empty())
+                continue;
+
+            if (
+                commandLine.size() == 1 &&
+                commandController.isValidCommand(commandLine[0])
+            )
+            {
+                sendRobotCommand(commandLine[0]);
+            }
+            else if (commandController.isValidPacket(commandLine))
+            {
+                sendRobotPacket(commandLine);
             }
         }
     }
-// Отправляет команду управления на плату
+
+    // Отправляет команду управления на плату
     void sendRobotCommand(char command)
     {
         if (
@@ -915,6 +997,36 @@ private:
 
             publishEvent(
                 std::string("Ошибка отправки команды: ") + command
+            );
+        }
+    }
+
+    // Отправляет целый пользовательский пакет на Arduino.
+    void sendRobotPacket(const std::string& packet)
+    {
+        const std::string packetWithNewline = packet + "\n";
+
+        if (serialController.sendData(
+                packetWithNewline.c_str(),
+                packetWithNewline.size()))
+        {
+            std::cout
+                << "Пакет: "
+                << packet
+                << std::endl;
+
+            publishEvent(
+                "Пакет: " + packet
+            );
+        }
+        else
+        {
+            std::cerr
+                << "Не удалось отправить пакет плате робота."
+                << std::endl;
+
+            publishEvent(
+                "Ошибка отправки пакета: " + packet
             );
         }
     }
@@ -956,11 +1068,9 @@ private:
 
         publishEvent("PC отключён.");
 
-        if (serialController.sendCommand('S'))
-        {
-            publishEvent("Безопасная остановка после отключения ПК.");
-        }
-
+        // При обычном телеуправлении Arduino сам остановится по watchdog.
+        // Если в этот момент уже запущен пользовательский пакет, Arduino
+        // продолжит его выполнение даже без TCP-связи.
         networkController.closeClient();
 
         std::cout
