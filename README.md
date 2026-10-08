@@ -72,6 +72,7 @@
 
     sudo apt update
     sudo apt install python3-opencv
+    sudo apt install -y libopencv-dev pkg-config
 
 Подготовить USB-флешку:
 
