@@ -39,7 +39,8 @@ private:
     QComboBox* qualitySelector = nullptr;
     QPushButton* recordButton = nullptr;
     QPushButton* rammingButton = nullptr;
-    QPushButton* armButton = nullptr;
+    QTextEdit* packetEditor = nullptr;
+    QPushButton* sendPacketButton = nullptr;
     QTextEdit* logView = nullptr;
     RobotConnection robot;
     VideoConnection video;
