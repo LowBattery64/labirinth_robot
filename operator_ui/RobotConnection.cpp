@@ -68,14 +68,21 @@ void RobotConnection::stop()
     sendCurrentCommand();
 }
 
-void RobotConnection::armAutoReturn()
+void RobotConnection::sendCommandPacket(const QString& packet)
 {
-    sendControlByte('A');
-}
+    if (socket.state() != QAbstractSocket::ConnectedState)
+        return;
 
-void RobotConnection::disarmAutoReturn()
-{
-    sendControlByte('a');
+    // После передачи пакета обычная команда телеуправления не должна
+    // приходить каждые 100 мс и отменять пакет на Arduino.
+    currentCommand = 'S';
+
+    QByteArray data = packet.toUtf8();
+
+    if (!data.endsWith('\n'))
+        data.append('\n');
+
+    socket.write(data);
 }
 
 void RobotConnection::setRammingEnabled(bool enabled)
@@ -89,6 +96,7 @@ void RobotConnection::sendControlByte(char byte)
         return;
 
     socket.write(QByteArray(1, byte));
+    socket.write("\n");
 }
 
 void RobotConnection::sendCurrentCommand()

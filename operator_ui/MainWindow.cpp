@@ -11,6 +11,7 @@
 #include <QFont>
 #include <QGraphicsDropShadowEffect>
 #include <QSignalBlocker>
+#include <QRegularExpression>
 
 namespace {
 QLabel* statusCard(const QString& title, QLabel*& value)
@@ -201,20 +202,34 @@ void MainWindow::setupUi()
     rammingHint->setObjectName("hint");
     controlLayout->addWidget(rammingHint);
 
-    armButton = new QPushButton("ВКЛЮЧИТЬ АВТО-ВОЗВРАТ");
-    armButton->setObjectName("armButton");
-    armButton->setCheckable(true);
-    armButton->setMinimumHeight(44);
-    controlLayout->addWidget(armButton);
+    auto* packetTitle = new QLabel("ПАКЕТ АВТО-ВОЗВРАТА");
+    packetTitle->setObjectName("panelTitle");
+    controlLayout->addWidget(packetTitle);
 
-    auto* armHint = new QLabel(
-        "Если связь пропадёт сама по себе, робот и так попробует\n"
-        "вернуться назад тем же путём. Эта кнопка - для другого:\n"
-        "нажмите её ПЕРЕД заездом в зону без связи, чтобы робот там\n"
-        "проехал вперёд, развернулся и сам вернулся обратно.");
-    armHint->setWordWrap(true);
-    armHint->setObjectName("hint");
-    controlLayout->addWidget(armHint);
+    packetEditor = new QTextEdit;
+    packetEditor->setPlaceholderText(
+        "F 700\n"
+        "R 1900\n"
+        "B 700");
+    packetEditor->setMaximumHeight(120);
+    packetEditor->setPlainText(
+        "F 700\n"
+        "R 1900\n"
+        "B 700");
+    controlLayout->addWidget(packetEditor);
+
+    auto* packetHint = new QLabel(
+        "Каждая строка: команда F/B/L/R/S и длительность в мс.\n"
+        "Пакет содержит весь маршрут: выезд из зоны связи + разворот + возврат.\n"
+        "Отправьте его ДО потери связи — после получения Arduino выполнит его сам.");
+    packetHint->setWordWrap(true);
+    packetHint->setObjectName("hint");
+    controlLayout->addWidget(packetHint);
+
+    sendPacketButton = new QPushButton("ОТПРАВИТЬ ПАКЕТ НА РОБОТА");
+    sendPacketButton->setObjectName("armButton");
+    sendPacketButton->setMinimumHeight(44);
+    controlLayout->addWidget(sendPacketButton);
 
     auto* emergency = new QPushButton("АВАРИЙНАЯ ОСТАНОВКА");
     emergency->setObjectName("emergency");
@@ -264,7 +279,6 @@ void MainWindow::setupUi()
         #rammingButton { color:#f1c36d; border:1px solid #8a6a2a; font-weight:700; }
         #rammingButton:checked { color:#ff8c8c; border:1px solid #ff4f87; background:#38202c; }
         #armButton { color:#8bd69a; border:1px solid #3d7a4e; font-weight:700; }
-        #armButton:checked { color:#48efff; border:1px solid #1c8fa0; background:#123038; }
         #panel, #statusCard { background:#171d23; border:1px solid #303943; border-radius:8px; }
         #panelTitle { font-size:17px; font-weight:700; }
         #cardValue { font-size:17px; font-weight:700; }
@@ -308,17 +322,46 @@ void MainWindow::setupUi()
         appendLog(checked ? "Таран включён оператором" : "Таран выключен оператором");
     });
 
-    connect(armButton, &QPushButton::toggled, this, [this](bool checked) {
-        if (checked)
-            robot.armAutoReturn();
-        else
-            robot.disarmAutoReturn();
-        armButton->setText(checked
-            ? "АВТО-ВОЗВРАТ ВКЛЮЧЁН"
-            : "ВКЛЮЧИТЬ АВТО-ВОЗВРАТ");
-        appendLog(checked
-            ? "Авто-возврат включён оператором (перед зоной без связи)"
-            : "Авто-возврат выключен оператором");
+    connect(sendPacketButton, &QPushButton::clicked, this, [this] {
+        const QStringList lines = packetEditor->toPlainText().split(
+            QRegularExpression("[\\r\\n]+"),
+            Qt::SkipEmptyParts);
+
+        QStringList packetSteps;
+
+        if (lines.size() > 24) {
+            appendLog("Ошибка пакета: максимум 24 шага");
+            return;
+        }
+
+        for (const QString& rawLine : lines) {
+            const QStringList parts = rawLine.simplified().split(' ', Qt::SkipEmptyParts);
+
+            if (parts.size() != 2 || parts[0].size() != 1) {
+                appendLog("Ошибка пакета: используйте формат F 700");
+                return;
+            }
+
+            const QChar command = parts[0].at(0).toUpper();
+            bool ok = false;
+            const int duration = parts[1].toInt(&ok);
+
+            if (!QString("FBLRS").contains(command) || !ok || duration <= 0) {
+                appendLog("Ошибка пакета: допустимы F/B/L/R/S и длительность > 0");
+                return;
+            }
+
+            packetSteps << QString("%1:%2").arg(command).arg(duration);
+        }
+
+        if (packetSteps.isEmpty()) {
+            appendLog("Ошибка пакета: список команд пуст");
+            return;
+        }
+
+        const QString packet = "P," + packetSteps.join(';');
+        robot.sendCommandPacket(packet);
+        appendLog("Пакет отправлен: " + packet);
     });
 }
 
@@ -429,14 +472,6 @@ void MainWindow::updateTelemetry(const Telemetry& telemetry)
         QSignalBlocker blocker(rammingButton);
         rammingButton->setChecked(telemetry.rammingEnabled);
         rammingButton->setText(telemetry.rammingEnabled ? "ТАРАН: ВКЛ" : "ТАРАН: ВЫКЛ");
-    }
-
-    {
-        QSignalBlocker blocker(armButton);
-        armButton->setChecked(telemetry.armedForReturn);
-        armButton->setText(telemetry.armedForReturn
-            ? "АВТО-ВОЗВРАТ ВКЛЮЧЁН"
-            : "ВКЛЮЧИТЬ АВТО-ВОЗВРАТ");
     }
 
     const bool maneuverActive = telemetry.mode != "TELEOP";
