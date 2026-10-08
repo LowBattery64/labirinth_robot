@@ -928,7 +928,7 @@ private:
         while (true)
         {
             const size_t newlinePosition =
-                networkCommandBuffer.find('\\n');
+                networkCommandBuffer.find('\n');
 
             if (newlinePosition == std::string::npos)
             {
@@ -948,7 +948,7 @@ private:
 
             while (
                 !commandLine.empty() &&
-                (commandLine.back() == '\\r' || commandLine.back() == ' ')
+                (commandLine.back() == '\r' || commandLine.back() == ' ')
             )
             {
                 commandLine.pop_back();
