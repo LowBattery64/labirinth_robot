@@ -46,8 +46,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent)
         appendLogLine(line);
 
     setupConnections();
-    robot.connectToRobot("10.109.150.232");
-    video.connectToCameraBridge("10.109.150.232");
+    robot.connectToRobot("10.25.39.101");
+    video.connectToCameraBridge("10.25.39.101");
 
     if (loggingReady) {
         appendLog("Операторское приложение запущено");
