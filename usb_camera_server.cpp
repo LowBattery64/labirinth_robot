@@ -12,6 +12,7 @@
 #include <netinet/tcp.h>
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
 #include <arpa/inet.h>
 #include <sys/socket.h>
@@ -123,7 +124,8 @@ public:
         if (!writer.isOpened() ||
             frame.size() != frameSize ||
             std::chrono::duration_cast<std::chrono::seconds>(
-                now - segmentStarted).count() >= segmentSeconds)
+                now - segmentStarted
+            ).count() >= segmentSeconds)
         {
             openWriter(frame.size(), now);
         }
@@ -133,7 +135,10 @@ public:
     }
 
 private:
-    void openWriter(const cv::Size& size, std::chrono::steady_clock::time_point now)
+    void openWriter(
+        const cv::Size& size,
+        std::chrono::steady_clock::time_point now
+    )
     {
         releaseWriter();
 
@@ -144,10 +149,16 @@ private:
         localtime_r(&time, &localTime);
 
         char timestamp[32];
-        std::strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", &localTime);
+        std::strftime(
+            timestamp,
+            sizeof(timestamp),
+            "%Y%m%d_%H%M%S",
+            &localTime
+        );
 
         const fs::path outputPath =
-            outputDirectory / (std::string("omegabot_usb_") + timestamp + ".avi");
+            outputDirectory /
+            (std::string("omegabot_usb_") + timestamp + ".avi");
 
         writer.open(
             outputPath.string(),
@@ -158,15 +169,20 @@ private:
 
         if (!writer.isOpened())
         {
-            std::cerr << "Не удалось открыть файл записи: "
-                      << outputPath << std::endl;
+            std::cerr
+                << "Не удалось открыть файл записи: "
+                << outputPath
+                << std::endl;
             return;
         }
 
         frameSize = size;
         segmentStarted = now;
 
-        std::cout << "Запись: " << outputPath << std::endl;
+        std::cout
+            << "Запись: "
+            << outputPath
+            << std::endl;
     }
 
     void releaseWriter()
@@ -189,7 +205,10 @@ private:
 class VideoProcessor
 {
 public:
-    explicit VideoProcessor(const fs::path& recordDirectory, int segmentSeconds)
+    explicit VideoProcessor(
+        const fs::path& recordDirectory,
+        int segmentSeconds
+    )
         : recorder(recordDirectory, segmentSeconds)
     {
     }
@@ -248,36 +267,62 @@ public:
         }
         else
         {
-            cv::Mat frame = cv::imdecode(source, cv::IMREAD_COLOR);
+            cv::Mat frame =
+                cv::imdecode(source, cv::IMREAD_COLOR);
 
             if (frame.empty())
                 return source;
 
             if (qualityValue == 70)
             {
-                cv::resize(frame, frame, cv::Size(), 0.75, 0.75, cv::INTER_AREA);
+                cv::resize(
+                    frame,
+                    frame,
+                    cv::Size(),
+                    0.75,
+                    0.75,
+                    cv::INTER_AREA
+                );
             }
             else
             {
-                cv::resize(frame, frame, cv::Size(), 0.5, 0.5, cv::INTER_AREA);
+                cv::resize(
+                    frame,
+                    frame,
+                    cv::Size(),
+                    0.5,
+                    0.5,
+                    cv::INTER_AREA
+                );
             }
 
             const std::vector<int> parameters{
-                cv::IMWRITE_JPEG_QUALITY, qualityValue
+                cv::IMWRITE_JPEG_QUALITY,
+                qualityValue
             };
 
-            if (!cv::imencode(".jpg", frame, result, parameters))
+            if (!cv::imencode(
+                    ".jpg",
+                    frame,
+                    result,
+                    parameters
+                ))
+            {
                 result = source;
+            }
         }
 
         recorder.write(result);
+
         return result;
     }
 
 private:
     mutable std::mutex mutex;
+
     std::string quality = "HIGH";
     int jpegQuality = 85;
+
     VideoRecorder recorder;
 };
 
@@ -291,21 +336,36 @@ public:
 
     bool initialize()
     {
-        serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+        serverSocket =
+            socket(AF_INET, SOCK_STREAM, 0);
 
         if (serverSocket < 0)
             return false;
 
         int reuse = 1;
-        setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+        setsockopt(
+            serverSocket,
+            SOL_SOCKET,
+            SO_REUSEADDR,
+            &reuse,
+            sizeof(reuse)
+        );
 
         sockaddr_in address{};
+
         address.sin_family = AF_INET;
         address.sin_addr.s_addr = INADDR_ANY;
         address.sin_port = htons(port);
 
-        if (bind(serverSocket, reinterpret_cast<sockaddr*>(&address), sizeof(address)) < 0)
+        if (bind(
+                serverSocket,
+                reinterpret_cast<sockaddr*>(&address),
+                sizeof(address)
+            ) < 0)
+        {
             return false;
+        }
 
         return listen(serverSocket, 1) >= 0;
     }
@@ -325,7 +385,14 @@ public:
             return false;
 
         int noDelay = 1;
-        setsockopt(clientSocket, IPPROTO_TCP, TCP_NODELAY, &noDelay, sizeof(noDelay));
+
+        setsockopt(
+            clientSocket,
+            IPPROTO_TCP,
+            TCP_NODELAY,
+            &noDelay,
+            sizeof(noDelay)
+        );
 
         return true;
     }
@@ -335,15 +402,17 @@ public:
         if (clientSocket < 0)
             return false;
 
-        const uint32_t size = htonl(static_cast<uint32_t>(frame.size()));
+        const uint32_t size =
+            htonl(static_cast<uint32_t>(frame.size()));
 
         return sendAll(
-            reinterpret_cast<const char*>(&size),
-            sizeof(size)
-        ) && sendAll(
-            reinterpret_cast<const char*>(frame.data()),
-            frame.size()
-        );
+                   reinterpret_cast<const char*>(&size),
+                   sizeof(size)
+               ) &&
+               sendAll(
+                   reinterpret_cast<const char*>(frame.data()),
+                   frame.size()
+               );
     }
 
     void closeClient()
@@ -388,6 +457,7 @@ private:
     }
 
     int port;
+
     int serverSocket = -1;
     int clientSocket = -1;
 };
@@ -395,7 +465,10 @@ private:
 class VideoControlServer
 {
 public:
-    VideoControlServer(int port, VideoProcessor& processor)
+    VideoControlServer(
+        int port,
+        VideoProcessor& processor
+    )
         : port(port),
           processor(processor)
     {
@@ -403,26 +476,45 @@ public:
 
     bool initialize()
     {
-        serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+        serverSocket =
+            socket(AF_INET, SOCK_STREAM, 0);
 
         if (serverSocket < 0)
             return false;
 
         int reuse = 1;
-        setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+        setsockopt(
+            serverSocket,
+            SOL_SOCKET,
+            SO_REUSEADDR,
+            &reuse,
+            sizeof(reuse)
+        );
 
         sockaddr_in address{};
+
         address.sin_family = AF_INET;
         address.sin_addr.s_addr = INADDR_ANY;
         address.sin_port = htons(port);
 
-        if (bind(serverSocket, reinterpret_cast<sockaddr*>(&address), sizeof(address)) < 0)
+        if (bind(
+                serverSocket,
+                reinterpret_cast<sockaddr*>(&address),
+                sizeof(address)
+            ) < 0)
+        {
             return false;
+        }
 
         if (listen(serverSocket, 4) < 0)
             return false;
 
-        std::thread(&VideoControlServer::acceptLoop, this).detach();
+        std::thread(
+            &VideoControlServer::acceptLoop,
+            this
+        ).detach();
+
         return true;
     }
 
@@ -459,47 +551,89 @@ private:
 
     void clientLoop(int client)
     {
-        sendLine(client, "QUALITY " + processor.getQuality());
-        sendLine(client, std::string("RECORD ") + (processor.isRecording() ? "ON" : "OFF"));
+        sendLine(
+            client,
+            "QUALITY " + processor.getQuality()
+        );
+
+        sendLine(
+            client,
+            std::string("RECORD ") +
+            (processor.isRecording() ? "ON" : "OFF")
+        );
 
         char buffer[1024];
         std::string pending;
 
         while (true)
         {
-            const ssize_t received = recv(client, buffer, sizeof(buffer), 0);
+            const ssize_t received =
+                recv(
+                    client,
+                    buffer,
+                    sizeof(buffer),
+                    0
+                );
 
             if (received <= 0)
                 break;
 
-            pending.append(buffer, static_cast<size_t>(received));
+            pending.append(
+                buffer,
+                static_cast<size_t>(received)
+            );
 
             size_t newline;
 
-            while ((newline = pending.find('\n')) != std::string::npos)
+            while (
+                (newline = pending.find('\n'))
+                != std::string::npos
+            )
             {
-                std::string command = pending.substr(0, newline);
-                pending.erase(0, newline + 1);
+                std::string command =
+                    pending.substr(0, newline);
 
-                while (!command.empty() &&
-                       (command.back() == '\r' || command.back() == ' '))
+                pending.erase(
+                    0,
+                    newline + 1
+                );
+
+                while (
+                    !command.empty() &&
+                    (
+                        command.back() == '\r' ||
+                        command.back() == ' '
+                    )
+                )
                 {
                     command.pop_back();
                 }
 
-                sendLine(client, handleCommand(command));
+                sendLine(
+                    client,
+                    handleCommand(command)
+                );
             }
         }
 
         close(client);
     }
 
-    std::string handleCommand(const std::string& command)
+    std::string handleCommand(
+        const std::string& command
+    )
     {
         if (command == "STATUS")
         {
-            return "QUALITY " + processor.getQuality() +
-                   "\nRECORD " + (processor.isRecording() ? "ON" : "OFF");
+            return
+                "QUALITY " +
+                processor.getQuality() +
+                "\nRECORD " +
+                (
+                    processor.isRecording()
+                        ? "ON"
+                        : "OFF"
+                );
         }
 
         if (command == "QUALITY HIGH")
@@ -535,14 +669,25 @@ private:
         return "ERROR Неизвестная команда";
     }
 
-    static void sendLine(int socket, const std::string& text)
+    static void sendLine(
+        int socket,
+        const std::string& text
+    )
     {
-        const std::string message = text + "\n";
-        send(socket, message.data(), message.size(), MSG_NOSIGNAL);
+        const std::string message =
+            text + "\n";
+
+        send(
+            socket,
+            message.data(),
+            message.size(),
+            MSG_NOSIGNAL
+        );
     }
 
     int port;
     int serverSocket = -1;
+
     VideoProcessor& processor;
 };
 
@@ -558,6 +703,7 @@ public:
     )
         : cameraIndex(cameraIndex),
           videoServer(videoPort),
+          processor(recordDirectory, segmentSeconds),
           controlServer(controlPort, processor),
           recordDirectory(recordDirectory),
           segmentSeconds(segmentSeconds)
@@ -566,31 +712,57 @@ public:
 
     int run()
     {
-        std::cout << "OmegaBot USB Camera Video Server" << std::endl;
+        std::cout
+            << "OmegaBot USB Camera Video Server"
+            << std::endl;
 
         if (!camera.open(cameraIndex))
         {
-            std::cerr << "Не удалось открыть USB-камеру, индекс "
-                      << cameraIndex << "." << std::endl;
+            std::cerr
+                << "Не удалось открыть USB-камеру, индекс "
+                << cameraIndex
+                << "."
+                << std::endl;
+
             return 1;
         }
 
         if (!videoServer.initialize())
         {
-            std::cerr << "Не удалось запустить TCP-видеосервер." << std::endl;
+            std::cerr
+                << "Не удалось запустить TCP-видеосервер."
+                << std::endl;
+
             return 1;
         }
 
         if (!controlServer.initialize())
         {
-            std::cerr << "Не удалось запустить канал управления видео." << std::endl;
+            std::cerr
+                << "Не удалось запустить канал управления видео."
+                << std::endl;
+
             return 1;
         }
 
-        std::cout << "USB-камера открыта." << std::endl;
-        std::cout << "Видео: TCP " << 5001 << std::endl;
-        std::cout << "Управление видео: TCP " << 5002 << std::endl;
-        std::cout << "Запись: " << recordDirectory << std::endl;
+        std::cout
+            << "USB-камера открыта."
+            << std::endl;
+
+        std::cout
+            << "Видео: TCP "
+            << 5001
+            << std::endl;
+
+        std::cout
+            << "Управление видео: TCP "
+            << 5002
+            << std::endl;
+
+        std::cout
+            << "Запись: "
+            << recordDirectory
+            << std::endl;
 
         std::vector<uchar> frame;
 
@@ -599,9 +771,15 @@ public:
             if (!videoServer.waitForClient())
                 continue;
 
-            while (camera.captureJpeg(frame, getJpegQuality()))
+            while (
+                camera.captureJpeg(
+                    frame,
+                    getJpegQuality()
+                )
+            )
             {
-                const std::vector<uchar> processed = processor.process(frame);
+                const std::vector<uchar> processed =
+                    processor.process(frame);
 
                 if (!videoServer.sendFrame(processed))
                     break;
@@ -616,31 +794,46 @@ public:
 private:
     int getJpegQuality() const
     {
-        const std::string quality = processor.getQuality();
+        const std::string quality =
+            processor.getQuality();
 
         if (quality == "HIGH")
             return 85;
+
         if (quality == "MEDIUM")
             return 70;
+
         return 55;
     }
 
     int cameraIndex;
+
     TcpVideoServer videoServer;
+
     VideoProcessor processor;
+
     VideoControlServer controlServer;
+
     CameraCapture camera;
+
     fs::path recordDirectory;
+
     int segmentSeconds;
 };
 
 int main(int argc, char* argv[])
 {
-    int cameraIndex = VideoSettings::DefaultCameraIndex;
+    int cameraIndex =
+        VideoSettings::DefaultCameraIndex;
+
     int videoPort = 5001;
     int controlPort = 5002;
-    int segmentSeconds = VideoSettings::DefaultSegmentSeconds;
-    fs::path recordDirectory = "/media/raspberry/76E8-CACF/omegabot_recordings";
+
+    int segmentSeconds =
+        VideoSettings::DefaultSegmentSeconds;
+
+    fs::path recordDirectory =
+        "/media/raspberry/76E8-CACF/omegabot_recordings";
 
     if (argc > 1)
         cameraIndex = std::stoi(argv[1]);
