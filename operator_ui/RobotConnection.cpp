@@ -73,6 +73,10 @@ void RobotConnection::sendCommandPacket(const QString& packet)
     if (socket.state() != QAbstractSocket::ConnectedState)
         return;
 
+    // После передачи пакета обычная команда телеуправления не должна
+    // приходить каждые 100 мс и отменять пакет на Arduino.
+    currentCommand = 'S';
+
     QByteArray data = packet.toUtf8();
 
     if (!data.endsWith('\n'))
