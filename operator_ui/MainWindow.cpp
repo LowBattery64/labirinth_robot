@@ -329,6 +329,11 @@ void MainWindow::setupUi()
 
         QStringList packetSteps;
 
+        if (lines.size() > 24) {
+            appendLog("Ошибка пакета: максимум 24 шага");
+            return;
+        }
+
         for (const QString& rawLine : lines) {
             const QStringList parts = rawLine.simplified().split(' ', Qt::SkipEmptyParts);
 
