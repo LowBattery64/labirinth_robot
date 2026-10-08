@@ -11,6 +11,7 @@
 #include <QFont>
 #include <QGraphicsDropShadowEffect>
 #include <QSignalBlocker>
+#include <QRegularExpression>
 
 namespace {
 QLabel* statusCard(const QString& title, QLabel*& value)
@@ -278,7 +279,6 @@ void MainWindow::setupUi()
         #rammingButton { color:#f1c36d; border:1px solid #8a6a2a; font-weight:700; }
         #rammingButton:checked { color:#ff8c8c; border:1px solid #ff4f87; background:#38202c; }
         #armButton { color:#8bd69a; border:1px solid #3d7a4e; font-weight:700; }
-        #armButton { color:#8bd69a; border:1px solid #3d7a4e; font-weight:700; }
         #panel, #statusCard { background:#171d23; border:1px solid #303943; border-radius:8px; }
         #panelTitle { font-size:17px; font-weight:700; }
         #cardValue { font-size:17px; font-weight:700; }
@@ -341,11 +341,9 @@ void MainWindow::setupUi()
             bool ok = false;
             const int duration = parts[1].toInt(&ok);
 
-            if (QString("FBLRS").contains(command) || !ok || duration <= 0) {
-                if (!QString("FBLRS").contains(command) || !ok || duration <= 0) {
-                    appendLog("Ошибка пакета: допустимы F/B/L/R/S и длительность > 0");
-                    return;
-                }
+            if (!QString("FBLRS").contains(command) || !ok || duration <= 0) {
+                appendLog("Ошибка пакета: допустимы F/B/L/R/S и длительность > 0");
+                return;
             }
 
             packetSteps << QString("%1:%2").arg(command).arg(duration);
