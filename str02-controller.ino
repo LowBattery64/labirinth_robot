@@ -413,6 +413,98 @@ private:
 
 
 // ============================================================
+// История перемещений для резервного возврата
+// ============================================================
+
+class MoveHistory
+{
+public:
+    struct Move
+    {
+        char command;
+        unsigned long durationMs;
+    };
+
+private:
+    static const uint8_t CAPACITY = 64;
+
+    Move moves[CAPACITY];
+    uint8_t count;
+
+public:
+    MoveHistory()
+        : count(0)
+    {
+    }
+
+    void push(char command, unsigned long durationMs)
+    {
+        if (command == 'S' || durationMs == 0)
+        {
+            return;
+        }
+
+        if (count >= CAPACITY)
+        {
+            for (uint8_t i = 1; i < CAPACITY; ++i)
+            {
+                moves[i - 1] = moves[i];
+            }
+
+            count = CAPACITY - 1;
+        }
+
+        moves[count].command = command;
+        moves[count].durationMs = durationMs;
+        ++count;
+    }
+
+    bool popInverse(char &command, unsigned long &durationMs)
+    {
+        if (count == 0)
+        {
+            return false;
+        }
+
+        --count;
+
+        command = invert(moves[count].command);
+        durationMs = moves[count].durationMs;
+
+        return true;
+    }
+
+    bool isEmpty() const
+    {
+        return count == 0;
+    }
+
+    uint8_t size() const
+    {
+        return count;
+    }
+
+    void clear()
+    {
+        count = 0;
+    }
+
+private:
+    static char invert(char command)
+    {
+        switch (command)
+        {
+        case 'F': return 'B';
+        case 'B': return 'F';
+        case 'L': return 'R';
+        case 'R': return 'L';
+        default:  return 'S';
+        }
+    }
+};
+
+
+// ============================================================
 // Выполнение пользовательского пакета команд
 // ============================================================
 //
@@ -444,6 +536,7 @@ private:
 
     MotorController &motors;
     SafetyController &safety;
+    MoveHistory &history;
 
     Step steps[MAX_STEPS];
     uint8_t stepCount;
@@ -454,10 +547,12 @@ private:
 public:
     CommandPacketExecutor(
         MotorController &motorController,
-        SafetyController &safetyController
+        SafetyController &safetyController,
+        MoveHistory &moveHistory
     )
         : motors(motorController),
           safety(safetyController),
+          history(moveHistory),
           stepCount(0),
           currentStep(0),
           stepStartMs(0),
@@ -525,6 +620,7 @@ public:
         }
 
         motors.stop();
+        history.clear();
 
         for (uint8_t i = 0; i < parsedCount; ++i)
         {
@@ -558,6 +654,11 @@ public:
 
         if (millis() - stepStartMs >= steps[currentStep].durationMs)
         {
+            history.push(
+                steps[currentStep].command,
+                steps[currentStep].durationMs
+            );
+
             ++currentStep;
             stepStartMs = millis();
 
@@ -577,6 +678,14 @@ public:
         if (!active)
         {
             return;
+        }
+
+        if (currentStep < stepCount)
+        {
+            history.push(
+                steps[currentStep].command,
+                millis() - stepStartMs
+            );
         }
 
         active = false;
@@ -672,8 +781,10 @@ private:
     MotorController &motors;
     SafetyController &safety;
     CommandPacketExecutor &packetExecutor;
+    MoveHistory &history;
 
     unsigned long lastCommandMs;
+    unsigned long commandStartMs;
     char requestedCommand;
     bool watchdogStopped;
 
@@ -684,11 +795,13 @@ public:
     CommandProtocol(
         MotorController &motorController,
         SafetyController &safetyController,
-        CommandPacketExecutor &executor
+        CommandPacketExecutor &executor,
+        MoveHistory &moveHistory
     )
         : motors(motorController),
           safety(safetyController),
           packetExecutor(executor),
+          history(moveHistory),
           lastCommandMs(0),
           requestedCommand('S'),
           watchdogStopped(false),
@@ -699,6 +812,7 @@ public:
     void begin()
     {
         lastCommandMs = millis();
+        commandStartMs = millis();
     }
 
     void poll()
@@ -756,6 +870,7 @@ public:
             now - lastCommandMs > COMMAND_TIMEOUT_MS
         )
         {
+            recordCurrentSegment();
             motors.stop();
             requestedCommand = 'S';
             watchdogStopped = true;
@@ -780,6 +895,26 @@ public:
     bool packetActive() const
     {
         return packetExecutor.isActive();
+    }
+
+    bool hasHistory() const
+    {
+        return !history.isEmpty();
+    }
+
+    MoveHistory &moveHistory()
+    {
+        return history;
+    }
+
+    unsigned long millisSinceLastCommand() const
+    {
+        return millis() - lastCommandMs;
+    }
+
+    void clearHistory()
+    {
+        history.clear();
     }
 
     const char *modeName() const
@@ -847,6 +982,12 @@ private:
             break;
         }
 
+        if (command != requestedCommand)
+        {
+            recordCurrentSegment();
+            commandStartMs = millis();
+        }
+
         requestedCommand = command;
 
         switch (command)
@@ -884,6 +1025,17 @@ private:
         }
     }
 
+    void recordCurrentSegment()
+    {
+        if (requestedCommand != 'S')
+        {
+            history.push(
+                requestedCommand,
+                millis() - commandStartMs
+            );
+        }
+    }
+
     bool isValidCommand(char command) const
     {
         switch (command)
@@ -905,6 +1057,163 @@ private:
 
 
 // ============================================================
+// Резервный автономный возврат по истории движения
+// ============================================================
+
+class HistoryReturn
+{
+private:
+    static const unsigned long LOST_SIGNAL_MS = 3000;
+
+    MotorController &motors;
+    SafetyController &safety;
+    CommandProtocol &commandProtocol;
+
+    enum State : uint8_t
+    {
+        WAITING,
+        RETURNING
+    };
+
+    State state;
+    unsigned long phaseStartMs;
+    char currentCommand;
+    unsigned long currentDurationMs;
+
+public:
+    HistoryReturn(
+        MotorController &motorController,
+        SafetyController &safetyController,
+        CommandProtocol &protocol
+    )
+        : motors(motorController),
+          safety(safetyController),
+          commandProtocol(protocol),
+          state(WAITING),
+          phaseStartMs(0),
+          currentCommand('S'),
+          currentDurationMs(0)
+    {
+    }
+
+    void poll()
+    {
+        if (commandProtocol.packetActive())
+        {
+            return;
+        }
+
+        const bool operatorRecentlyActive =
+            commandProtocol.millisSinceLastCommand() < LOST_SIGNAL_MS;
+
+        if (state == WAITING)
+        {
+            if (!operatorRecentlyActive && commandProtocol.hasHistory())
+            {
+                beginReturn();
+            }
+
+            return;
+        }
+
+        if (operatorRecentlyActive)
+        {
+            motors.stop();
+            commandProtocol.clearHistory();
+            state = WAITING;
+            return;
+        }
+
+        runReturn();
+    }
+
+    const char *stateName() const
+    {
+        return state == RETURNING ? "HISTORY" : "TELEOP";
+    }
+
+private:
+    void beginReturn()
+    {
+        if (!loadNext())
+        {
+            state = WAITING;
+            return;
+        }
+
+        state = RETURNING;
+    }
+
+    bool loadNext()
+    {
+        if (!commandProtocol.moveHistory().popInverse(
+                currentCommand,
+                currentDurationMs))
+        {
+            motors.stop();
+            state = WAITING;
+            return false;
+        }
+
+        phaseStartMs = millis();
+        applyCurrentCommand();
+
+        return true;
+    }
+
+    void runReturn()
+    {
+        if (currentCommand == 'F' && safety.isForwardBlocked())
+        {
+            motors.stop();
+        }
+        else
+        {
+            applyCurrentCommand();
+        }
+
+        if (millis() - phaseStartMs >= currentDurationMs)
+        {
+            if (!loadNext())
+            {
+                motors.stop();
+            }
+        }
+    }
+
+    void applyCurrentCommand()
+    {
+        switch (currentCommand)
+        {
+        case 'F':
+            motors.setLeft(DEFAULT_DRIVE_SPEED);
+            motors.setRight(-DEFAULT_DRIVE_SPEED);
+            break;
+
+        case 'B':
+            motors.setLeft(-DEFAULT_DRIVE_SPEED);
+            motors.setRight(DEFAULT_DRIVE_SPEED);
+            break;
+
+        case 'L':
+            motors.setLeft(-DEFAULT_DRIVE_SPEED);
+            motors.setRight(-DEFAULT_DRIVE_SPEED);
+            break;
+
+        case 'R':
+            motors.setLeft(DEFAULT_DRIVE_SPEED);
+            motors.setRight(DEFAULT_DRIVE_SPEED);
+            break;
+
+        default:
+            motors.stop();
+            break;
+        }
+    }
+};
+
+
+// ============================================================
 // Объекты системы
 // ============================================================
 
@@ -914,11 +1223,22 @@ UltrasonicArray ultrasonicSensors;
 SpeedSensorArray speedSensors;
 CameraTracker camera;
 SafetyController safetyController(ultrasonicSensors);
-CommandPacketExecutor commandPacketExecutor(motors, safetyController);
+MoveHistory moveHistory;
+CommandPacketExecutor commandPacketExecutor(
+    motors,
+    safetyController,
+    moveHistory
+);
 CommandProtocol commandProtocol(
     motors,
     safetyController,
-    commandPacketExecutor
+    commandPacketExecutor,
+    moveHistory
+);
+HistoryReturn historyReturn(
+    motors,
+    safetyController,
+    commandProtocol
 );
 
 unsigned long lastTelemetryMs = 0;
@@ -973,7 +1293,14 @@ void sendTelemetry()
     Serial.print(commandProtocol.packetActive());
 
     Serial.print(",MODE,");
-    Serial.print(commandProtocol.modeName());
+    Serial.print(
+        commandPacketExecutor.isActive()
+            ? "PACKET"
+            : historyReturn.stateName()
+    );
+
+    Serial.print(",HIST,");
+    Serial.print(moveHistory.size());
 
     Serial.println();
 }
@@ -1010,6 +1337,7 @@ void loop()
     commandProtocol.safetyPoll();
     commandProtocol.watchdogPoll();
     commandProtocol.packetPoll();
+    historyReturn.poll();
 
     unsigned long now = millis();
 
